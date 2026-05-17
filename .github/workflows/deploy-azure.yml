@@ -136,9 +136,8 @@ jobs:
                 vmName="$VM_NAME" \
                 vmSize="$VM_SIZE" \
                 adminUsername="$ADMIN_USER" \
-                adminSSHKey="$ADMIN_SSH_KEY" \
-                githubRepo="$GH_REPO" \
-                tags='$TAGS' \
+                adminSSHKey="${ADMIN_SSH_KEY}" \
+                tags="$TAGS" \
                 customData="$CLOUD_INIT_B64"
 
       - name: Show deployment outputs

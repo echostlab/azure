@@ -28,9 +28,6 @@ param adminUsername string
 @description('SSH public key for admin access')
 param adminSSHKey string
 
-@description('GitHub repository in owner/repo format (e.g., EduardoC3677/azure)')
-param githubRepo string
-
 @description('Tags to apply to all resources')
 param tags object = {
   purpose: 'github-runner'
@@ -248,9 +245,6 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
   name: vnetName
   location: location
   tags: tags
-  dependsOn: [
-    nsg
-  ]
   properties: {
     addressSpace: {
       addressPrefixes: [
@@ -296,10 +290,6 @@ resource nic 'Microsoft.Network/networkInterfaces@2023-09-01' = {
   name: '${vmName}-nic'
   location: location
   tags: tags
-  dependsOn: [
-    vnet
-    pip
-  ]
   properties: {
     ipConfigurations: [
       {
@@ -324,9 +314,6 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
   name: vmName
   location: location
   tags: tags
-  dependsOn: [
-    nic
-  ]
   properties: {
     hardwareProfile: {
       vmSize: vmSize
