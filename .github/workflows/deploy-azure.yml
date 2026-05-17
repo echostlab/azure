@@ -12,12 +12,51 @@ on:
         description: "Azure resource group name"
         type: string
         required: true
-        default: "actions-nsg-rg"
-      nsgName:
-        description: "NSG resource name"
+        default: "actions-runner-rg"
+      vnetName:
+        description: "Virtual Network name"
+        type: string
+        required: false
+        default: "actions-vnet"
+      vnetAddressPrefix:
+        description: "VNet address space (CIDR)"
+        type: string
+        required: false
+        default: "10.0.0.0/16"
+      subnetName:
+        description: "Subnet name"
+        type: string
+        required: false
+        default: "runner-subnet"
+      subnetAddressPrefix:
+        description: "Subnet address prefix (CIDR)"
+        type: string
+        required: false
+        default: "10.0.1.0/24"
+      vmName:
+        description: "Runner VM name"
+        type: string
+        required: false
+        default: "github-runner-vm"
+      vmSize:
+        description: "VM size (SKU)"
+        type: string
+        required: false
+        default: "Standard_B2s"
+      adminUsername:
+        description: "Admin username for the VM"
         type: string
         required: true
-        default: "actions_NSG"
+        default: "azureuser"
+      adminSSHKey:
+        description: "SSH public key for admin access"
+        type: string
+        required: true
+      githubRepo:
+        description: "GitHub repository (owner/repo format)"
+        type: string
+        required: true
+        default: ""
 
 concurrency:
   group: azure-deploy-${{ github.workflow }}-${{ github.ref }}
@@ -26,11 +65,12 @@ concurrency:
 permissions:
   id-token: write
   contents: read
+  actions: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -55,22 +95,58 @@ jobs:
               --name "$RG_NAME" \
               --location "$LOCATION"
 
+      - name: Prepare cloud-init configuration
+        run: |
+          set -euo pipefail
+          sed -e "s|__GH_REPO__|${{ github.event.inputs.githubRepo }}|g" \
+              -e "s|__GH_TOKEN__|${{ secrets.GH_RUNNER_TOKEN }}|g" \
+              cloud-init-runner.yml > /tmp/cloud-init-processed.yml
+          echo "CLOUD_INIT_B64=$(base64 -w0 /tmp/cloud-init-processed.yml)" >> $GITHUB_ENV
+
       - name: Deploy Bicep template
         uses: azure/cli@v2
         env:
           RG_NAME: ${{ github.event.inputs.resourceGroupName }}
           LOCATION: ${{ github.event.inputs.location }}
-          NSG_NAME: ${{ github.event.inputs.nsgName }}
+          VNET_NAME: ${{ github.event.inputs.vnetName }}
+          VNET_PREFIX: ${{ github.event.inputs.vnetAddressPrefix }}
+          SUBNET_NAME: ${{ github.event.inputs.subnetName }}
+          SUBNET_PREFIX: ${{ github.event.inputs.subnetAddressPrefix }}
+          NSG_NAME: ${{ github.event.inputs.vnetName }}-nsg
+          VM_NAME: ${{ github.event.inputs.vmName }}
+          VM_SIZE: ${{ github.event.inputs.vmSize }}
+          ADMIN_USER: ${{ github.event.inputs.adminUsername }}
+          ADMIN_SSH_KEY: ${{ github.event.inputs.adminSSHKey }}
+          GH_REPO: ${{ github.event.inputs.githubRepo }}
+          TAGS: '{"purpose":"github-runner","managedBy":"github-actions","repo":"${{ github.event.inputs.githubRepo }}"}'
         with:
           inlineScript: |
             set -euo pipefail
             az deployment group create \
-              --name "actions-nsg-deployment" \
+              --name "actions-runner-deployment" \
               --resource-group "$RG_NAME" \
-              --template-file actions-nsg-deployment.bicep \
+              --template-file main.bicep \
               --parameters \
                 location="$LOCATION" \
-                nsgName="$NSG_NAME"
+                vnetName="$VNET_NAME" \
+                vnetAddressPrefix="$VNET_PREFIX" \
+                subnetName="$SUBNET_NAME" \
+                subnetAddressPrefix="$SUBNET_PREFIX" \
+                nsgName="$NSG_NAME" \
+                vmName="$VM_NAME" \
+                vmSize="$VM_SIZE" \
+                adminUsername="$ADMIN_USER" \
+                adminSSHKey="$ADMIN_SSH_KEY" \
+                githubRepo="$GH_REPO" \
+                tags='$TAGS' \
+                customData="$CLOUD_INIT_B64"
+
+      - name: Show deployment outputs
+        if: success()
+        run: |
+          echo "✅ Deployment completed successfully"
+          echo "📋 To check the runner status, visit:"
+          echo "   https://github.com/${{ github.event.inputs.githubRepo }}/settings/actions/runners"
 
       - name: Report deployment failure
         if: failure()
