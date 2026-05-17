@@ -20,7 +20,7 @@ param nsgName string = 'actions-nsg'
 param vmName string = 'github-runner-vm'
 
 @description('Size of the runner VM')
-param vmSize string = 'Standard_B2s'
+param vmSize string = 'Standard_B2als_v2'
 
 @description('Admin username for the VM')
 param adminUsername string
