@@ -1,0 +1,106 @@
+name: Deploy to Azure
+
+on:
+  workflow_dispatch:
+    inputs:
+      location:
+        description: 'Azure region'
+        required: true
+        type: string
+        default: 'eastus'
+      resourceGroupName:
+        description: 'Resource Group name'
+        required: true
+        type: string
+        default: 'rg-opencode-pro'
+      functionAppName:
+        description: 'Function App name (globally unique)'
+        required: true
+        type: string
+        default: 'func-opencode-pro'
+      keyVaultName:
+        description: 'Key Vault name (globally unique)'
+        required: true
+        type: string
+        default: 'kv-opencode-pro'
+      storageAccountName:
+        description: 'Storage Account name (globally unique)'
+        required: true
+        type: string
+        default: 'stopencodepro'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    name: Build Function App
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run build
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: function-app
+          path: |
+            src/
+            node_modules/
+            package.json
+            package-lock.json
+
+  deploy:
+    name: Deploy Infrastructure & Code
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure OIDC login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Bicep template
+        uses: azure/arm-deploy@v2
+        with:
+          scope: subscription
+          region: ${{ github.event.inputs.location }}
+          template: ./infra/main.bicep
+          parameters: |
+            location=${{ github.event.inputs.location }}
+            resourceGroupName=${{ github.event.inputs.resourceGroupName }}
+            functionAppName=${{ github.event.inputs.functionAppName }}
+            keyVaultName=${{ github.event.inputs.keyVaultName }}
+            storageAccountName=${{ github.event.inputs.storageAccountName }}
+          deploymentName: opencode-pro-${{ github.run_number }}
+          failOnStdErr: true
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: function-app
+
+      - name: Deploy to Azure Functions
+        uses: azure/functions-action@v1
+        with:
+          app-name: ${{ github.event.inputs.functionAppName }}
+          package: '.'
+          respect-funcignore: true
