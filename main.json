@@ -59,7 +59,7 @@
     },
     "vmSize": {
       "type": "string",
-      "defaultValue": "Standard_B2s",
+      "defaultValue": "Standard_B2als_v2",
       "metadata": {
         "description": "Size of the runner VM"
       }

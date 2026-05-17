@@ -34,7 +34,7 @@ Automated deployment of a complete Azure network with a self-hosted GitHub Actio
 
 - **VNet**: `10.0.0.0/16` address space with a single subnet (`10.0.1.0/24`)
 - **NSG**: Attached to the subnet with 4 outbound rules for secure runner operation
-- **VM**: `Standard_B2s` (2 vCPU, 4 GB), Ubuntu 22.04, SSH public key authentication, public IP
+- **VM**: `Standard_B2als_v2` (2 vCPU, 4 GB), Ubuntu 22.04, SSH public key authentication, public IP
 - **cloud-init**: Installs the Actions runner binary, requests a registration token via the GitHub API, and registers the runner with your repository on first boot
 
 ---
@@ -58,7 +58,7 @@ Manually triggered via the **Actions** tab on GitHub using the `workflow_dispatc
 | `subnetName` | No | `runner-subnet` | Name of the subnet within the VNet |
 | `subnetAddressPrefix` | No | `10.0.1.0/24` | Address prefix for the subnet |
 | `vmName` | No | `github-runner-vm` | Name of the virtual machine |
-| `vmSize` | No | `Standard_B2s` | VM SKU (2 vCPU, 4 GB RAM) |
+| `vmSize` | No | `Standard_B2als_v2` | VM SKU (2 vCPU, 4 GB RAM) |
 | `adminUsername` | Yes | `azureuser` | Admin username for the VM |
 | `adminSSHKey` | Yes | — | SSH public key for VM authentication |
 | `githubRepo` | Yes | — | Target repository in `owner/repo` format |

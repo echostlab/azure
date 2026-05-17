@@ -42,7 +42,7 @@ on:
         description: "VM size (SKU)"
         type: string
         required: false
-        default: "Standard_B2s"
+        default: "Standard_B2als_v2"
       adminUsername:
         description: "Admin username for the VM"
         type: string
