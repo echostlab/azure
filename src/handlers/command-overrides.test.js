@@ -143,4 +143,27 @@ describe('command overrides', () => {
       }).toThrow(CommandOverrideError);
     });
   });
+
+  it('fails when destination provider API key shape is invalid', () => {
+    withTemporaryEnv('ANTHROPIC_API_KEY', '  ', () => {
+      const baseConfig = createBaseConfig();
+
+      expect(() => {
+        applyCommandOverrides(baseConfig, { provider: 'anthropic' });
+      }).toThrow(CommandOverrideError);
+    });
+  });
+
+  it('fails when model override keeps provider but no valid key is available', () => {
+    withTemporaryEnv('OPENAI_API_KEY', undefined, () => {
+      const baseConfig = {
+        ...createBaseConfig(),
+        apiKey: 'short',
+      };
+
+      expect(() => {
+        applyCommandOverrides(baseConfig, { model: 'openai/gpt-4.1-mini' });
+      }).toThrow(CommandOverrideError);
+    });
+  });
 });

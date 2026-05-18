@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { getPullRequestFiles, listAllPullRequestFiles } from './github.js';
+import { getPullRequestFiles, listAllPullRequestFiles, readRepoFile } from './github.js';
 
 function createMockFiles(count, prefix = 'src/file') {
   return Array.from({ length: count }, (_, index) => ({
@@ -58,5 +58,44 @@ describe('GitHub PR files pagination', () => {
       filename: pageOne[0].filename,
       patch: pageOne[0].patch,
     });
+  });
+
+  it('throws a clear error when a pagination API call fails', async () => {
+    const listFiles = jest
+      .fn()
+      .mockResolvedValueOnce({ data: createMockFiles(100, 'src/page-one') })
+      .mockRejectedValueOnce(new Error('GitHub API unavailable'));
+
+    await expect(
+      listAllPullRequestFiles(listFiles, { owner: 'acme', repo: 'project', pull_number: 7 }),
+    ).rejects.toThrow('failed to fetch PR files page 2');
+  });
+});
+
+describe('readRepoFile', () => {
+  it('returns null for 404 responses', async () => {
+    const context = {
+      repo: jest.fn().mockReturnValue({ owner: 'acme', repo: 'project' }),
+      octokit: {
+        repos: {
+          getContent: jest.fn().mockRejectedValue({ status: 404 }),
+        },
+      },
+    };
+
+    await expect(readRepoFile(context, '.opencode-pro.json')).resolves.toBeNull();
+  });
+
+  it('rethrows unexpected API errors', async () => {
+    const context = {
+      repo: jest.fn().mockReturnValue({ owner: 'acme', repo: 'project' }),
+      octokit: {
+        repos: {
+          getContent: jest.fn().mockRejectedValue(new Error('boom')),
+        },
+      },
+    };
+
+    await expect(readRepoFile(context, '.opencode-pro.json')).rejects.toThrow('boom');
   });
 });

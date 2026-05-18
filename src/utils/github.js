@@ -76,11 +76,20 @@ export async function listAllPullRequestFiles(listFiles, baseParams) {
   const allFiles = [];
 
   for (let page = 1; page <= MAX_FILES_PAGES; page += 1) {
-    const { data } = await listFiles({
-      ...baseParams,
-      per_page: MAX_FILES_PER_PAGE,
-      page,
-    });
+    let data;
+    try {
+      ({ data } = await listFiles({
+        ...baseParams,
+        per_page: MAX_FILES_PER_PAGE,
+        page,
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `listAllPullRequestFiles: failed to fetch PR files page ${page}: ${message}`,
+        { cause: err },
+      );
+    }
 
     if (!Array.isArray(data) || data.length === 0) {
       return allFiles;
@@ -137,11 +146,19 @@ export async function getPullRequestFiles(context, pullNumber) {
  * @param {string} opts.name - Check run name
  * @param {string} [opts.status] - 'queued' | 'in_progress' | 'completed'
  * @param {string} [opts.conclusion] - Outcome when completed
+ * @param {string | null} [opts.externalId] - Optional idempotency key
  * @param {object} [opts.output] - Check run output {title, summary, text}
  * @returns {Promise<import('@octokit/rest').RestEndpointMethodTypes['checks']['create']['response']['data']>}
  */
 export async function createCheckRun(context, opts) {
-  const { headSha, name, status, conclusion, output } = opts;
+  const {
+    headSha,
+    name,
+    status,
+    conclusion,
+    externalId,
+    output,
+  } = opts;
 
   if (!headSha || !name) {
     throw new Error('createCheckRun: headSha and name are required');
@@ -155,6 +172,9 @@ export async function createCheckRun(context, opts) {
   };
 
   if (conclusion) params.conclusion = conclusion;
+  if (typeof externalId === 'string' && externalId.trim().length > 0) {
+    params.external_id = externalId.trim();
+  }
   if (output) params.output = output;
 
   const { data } = await context.octokit.checks.create(params);
@@ -203,7 +223,12 @@ export async function readRepoFile(context, path, ref) {
 
     const { data } = await context.octokit.repos.getContent(params);
     return Buffer.from(data.content, 'base64').toString('utf-8');
-  } catch {
-    return null;
+  } catch (err) {
+    if (err && typeof err === 'object' && 'status' in err && err.status === 404) {
+      return null;
+    }
+
+    error(`readRepoFile failed for path "${path}"`, err);
+    throw err;
   }
 }

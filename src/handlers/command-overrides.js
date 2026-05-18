@@ -49,6 +49,9 @@ const PROVIDER_API_KEY_ENV = {
   'openai-compatible': 'OPENAI_COMPATIBLE_API_KEY',
 };
 
+/** @type {number} */
+const MIN_API_KEY_LENGTH = 8;
+
 /**
  * Error thrown when command overrides result in unsafe or invalid state.
  */
@@ -169,17 +172,36 @@ export function stripCommandOverrides(body) {
  * Resolve provider-specific API key and its env name.
  *
  * @param {string} provider
+ * @param {{ required?: boolean }} [options]
  * @returns {{ envName: string | null, apiKey: string | null }}
  */
-function resolveProviderApiKey(provider) {
+function resolveProviderApiKey(provider, options = {}) {
+  const required = options.required === true;
   const envName = PROVIDER_API_KEY_ENV[provider] ?? null;
   if (!envName) {
+    if (required) {
+      throw new CommandOverrideError(`Provider "${provider}" does not support API key override resolution.`);
+    }
+
     return { envName: null, apiKey: null };
+  }
+
+  const rawApiKey = process.env[envName];
+  const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : '';
+
+  if (apiKey.length >= MIN_API_KEY_LENGTH) {
+    return { envName, apiKey };
+  }
+
+  if (required) {
+    throw new CommandOverrideError(
+      `Provider "${provider}" requires ${envName} to be set to a non-empty API key (minimum ${MIN_API_KEY_LENGTH} characters).`,
+    );
   }
 
   return {
     envName,
-    apiKey: process.env[envName] ?? null,
+    apiKey: null,
   };
 }
 
@@ -193,8 +215,12 @@ function buildProviderApiKeyRing(config) {
   /** @type {Record<string, string>} */
   const keyRing = {};
 
-  if (typeof config.provider === 'string' && typeof config.apiKey === 'string' && config.apiKey) {
-    keyRing[config.provider] = config.apiKey;
+  if (
+    typeof config.provider === 'string'
+    && typeof config.apiKey === 'string'
+    && config.apiKey.trim().length >= MIN_API_KEY_LENGTH
+  ) {
+    keyRing[config.provider] = config.apiKey.trim();
   }
 
   for (const provider of Object.keys(PROVIDER_API_KEY_ENV)) {
@@ -230,46 +256,46 @@ function defaultBaseUrl(provider) {
  * @returns {import('../config.js').LoadedConfig}
  */
 function applyModelOverride(config, modelString, providerApiKeys) {
-  try {
-    const parsed = parseModelString(modelString);
-    const providerChanged = parsed.provider !== config.provider;
-
-    let apiKey = config.apiKey;
-    if (providerChanged) {
-      const destinationApiKey = providerApiKeys[parsed.provider] ?? null;
-
-      if (!destinationApiKey) {
-        const targetProviderKey = resolveProviderApiKey(parsed.provider);
-        const envHint = targetProviderKey.envName ?? '<provider-specific env var>';
-        throw new CommandOverrideError(
-          `Cannot switch provider to "${parsed.provider}" without ${envHint} configured for this execution.`,
-        );
-      }
-
-      apiKey = destinationApiKey;
-      providerApiKeys[parsed.provider] = destinationApiKey;
-    }
-
-    return {
-      ...config,
-      model: modelString,
-      provider: parsed.provider,
-      modelName: parsed.modelName,
-      apiKey,
-      baseURL: providerChanged
-        ? (parsed.provider === 'openai-compatible'
-          ? config.baseURL
-          : defaultBaseUrl(parsed.provider))
-        : config.baseURL,
-    };
-  } catch (err) {
-    if (err instanceof CommandOverrideError) {
-      throw err;
-    }
-
-    warn(`Ignoring invalid model override: "${modelString}"`);
+  if (typeof modelString !== 'string' || modelString.trim().length === 0) {
+    warn(`Ignoring invalid model override: "${String(modelString)}"`);
     return config;
   }
+
+  const trimmedModelString = modelString.trim();
+
+  let parsed;
+  try {
+    parsed = parseModelString(trimmedModelString);
+  } catch {
+    warn(`Ignoring invalid model override: "${trimmedModelString}"`);
+    return config;
+  }
+
+  const providerChanged = parsed.provider !== config.provider;
+
+  let apiKey = config.apiKey;
+  const destinationApiKey = providerApiKeys[parsed.provider] ?? null;
+
+  if (typeof destinationApiKey === 'string' && destinationApiKey.trim().length >= MIN_API_KEY_LENGTH) {
+    apiKey = destinationApiKey.trim();
+  } else {
+    const resolvedProviderKey = resolveProviderApiKey(parsed.provider, { required: true });
+    apiKey = resolvedProviderKey.apiKey;
+    providerApiKeys[parsed.provider] = resolvedProviderKey.apiKey;
+  }
+
+  return {
+    ...config,
+    model: trimmedModelString,
+    provider: parsed.provider,
+    modelName: parsed.modelName,
+    apiKey,
+    baseURL: providerChanged
+      ? (parsed.provider === 'openai-compatible'
+        ? config.baseURL
+        : defaultBaseUrl(parsed.provider))
+      : config.baseURL,
+  };
 }
 
 /**

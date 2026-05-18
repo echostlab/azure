@@ -24,6 +24,13 @@ describe('trigger detection', () => {
     expect(detectTrigger('https://example.com/opencode', 'alice', botUsername).triggered).toBe(false);
   });
 
+  it('detects slash command case-insensitively', () => {
+    const result = detectTrigger('/OC review this PR', 'alice', botUsername);
+
+    expect(result.triggered).toBe(true);
+    expect(result.type).toBe('slash');
+  });
+
   it('detects mentions with and without [bot] suffix', () => {
     const mentionWithoutSuffix = detectTrigger('@opencode-pro please help', 'alice', botUsername);
     const mentionWithSuffix = detectTrigger('@opencode-pro[bot] please help', 'alice', botUsername);
@@ -32,6 +39,13 @@ describe('trigger detection', () => {
     expect(mentionWithoutSuffix.type).toBe('mention');
     expect(mentionWithSuffix.triggered).toBe(true);
     expect(mentionWithSuffix.type).toBe('mention');
+  });
+
+  it('detects mentions case-insensitively', () => {
+    const result = detectTrigger('@OpenCode-Pro can you check this?', 'alice', botUsername);
+
+    expect(result.triggered).toBe(true);
+    expect(result.type).toBe('mention');
   });
 
   it('ignores comments authored by the bot itself', () => {
@@ -54,6 +68,16 @@ describe('trigger detection', () => {
       model: 'openai/gpt-4o',
     });
   });
+
+  it('returns a consistent non-trigger payload when no trigger is present', () => {
+    const result = detectTrigger('Just discussing ideas here', 'alice', botUsername);
+
+    expect(result).toEqual({
+      triggered: false,
+      type: null,
+      params: {},
+    });
+  });
 });
 
 describe('auto trigger detection', () => {
@@ -65,6 +89,12 @@ describe('auto trigger detection', () => {
 
   it('does not trigger when bot username is missing', () => {
     const result = detectAutoTrigger('opencode-pro[bot]', '');
+    expect(result.triggered).toBe(false);
+    expect(result.type).toBe(null);
+  });
+
+  it('does not trigger when assignee differs from bot and returns null type', () => {
+    const result = detectAutoTrigger('alice', 'opencode-pro[bot]');
     expect(result.triggered).toBe(false);
     expect(result.type).toBe(null);
   });

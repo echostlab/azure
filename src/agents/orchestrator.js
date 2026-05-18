@@ -226,12 +226,23 @@ async function runAgent(agentType, config, opts) {
  * @returns {Promise<OrchestrationResult>}
  */
 export async function orchestrateAgents(context, task, config) {
-  if (!task) {
-    throw new Error('orchestrateAgents: task is required');
+  if (!context || typeof context !== 'object') {
+    throw new Error('orchestrateAgents: context is required');
+  }
+
+  if (typeof task !== 'string' || task.trim().length === 0) {
+    throw new Error('orchestrateAgents: task is required and must be a non-empty string');
+  }
+
+  if (!config || typeof config !== 'object') {
+    throw new Error('orchestrateAgents: config is required');
   }
 
   const totalStart = Date.now();
-  info(`Orchestrating agents for task: "${task.slice(0, 80)}..."`);
+  const runId = typeof context.id === 'string' || typeof context.id === 'number'
+    ? String(context.id)
+    : 'unknown';
+  info(`Orchestrating agents for task: "${task.slice(0, 80)}..." (runId=${runId})`);
 
   // ── Phase 1: Plan ─────────────────────────────────────────
 

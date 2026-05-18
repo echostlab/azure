@@ -4,6 +4,8 @@
  * @module handlers/review-conclusion
  */
 
+import { warn } from '../utils/logger.js';
+
 /**
  * Valid GitHub Checks API conclusions.
  *
@@ -43,6 +45,10 @@ const REVIEW_TOKEN_TO_CHECK_CONCLUSION = {
  * @returns {'approve' | 'reject' | 'comment' | null}
  */
 function extractConclusionToken(summary) {
+  if (typeof summary !== 'string' || summary.length === 0) {
+    return null;
+  }
+
   const lines = summary.split(/\r?\n/);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const lineMatch = lines[index].match(/^\s*CONCLUSION:\s*(APPROVE|REJECT|COMMENT)\s*$/i);
@@ -68,12 +74,21 @@ function extractConclusionToken(summary) {
  * @returns {string}
  */
 export function normalizeCheckConclusion(conclusion, fallback = 'neutral') {
-  const normalized = typeof conclusion === 'string' ? conclusion.toLowerCase() : '';
+  const normalized = typeof conclusion === 'string' ? conclusion.trim().toLowerCase() : '';
   if (VALID_CHECK_CONCLUSIONS.has(normalized)) {
     return normalized;
   }
 
-  return VALID_CHECK_CONCLUSIONS.has(fallback) ? fallback : 'neutral';
+  const normalizedFallback = typeof fallback === 'string' ? fallback.trim().toLowerCase() : '';
+  if (VALID_CHECK_CONCLUSIONS.has(normalizedFallback)) {
+    return normalizedFallback;
+  }
+
+  warn(
+    `normalizeCheckConclusion: invalid conclusion "${String(conclusion)}" with invalid fallback "${String(fallback)}"; using deterministic fallback "neutral".`,
+  );
+
+  return 'neutral';
 }
 
 /**
@@ -90,12 +105,12 @@ export function normalizeCheckConclusion(conclusion, fallback = 'neutral') {
  */
 export function mapReviewSummaryToCheckConclusion(summary, fallback = 'neutral') {
   if (typeof summary !== 'string' || summary.length === 0) {
-    return normalizeCheckConclusion(fallback);
+    return normalizeCheckConclusion('', fallback);
   }
 
   const reviewToken = extractConclusionToken(summary);
   if (!reviewToken) {
-    return normalizeCheckConclusion(fallback);
+    return normalizeCheckConclusion('', fallback);
   }
 
   const mappedConclusion = REVIEW_TOKEN_TO_CHECK_CONCLUSION[reviewToken];

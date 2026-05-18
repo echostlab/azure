@@ -20,7 +20,21 @@ import { parseCommandOverrides } from './command-overrides.js';
  */
 
 /** @type {RegExp} */
-const SLASH_COMMAND_PATTERN = /(^|\s)\/(?:oc|opencode)\b/i;
+const SLASH_COMMAND_PATTERN = /(^|\s)\/(?:oc|opencode)\b/;
+
+/**
+ * Normalize user-provided identifiers for robust trigger comparison.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function normalizeComparable(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.normalize('NFKC').trim().toLowerCase();
+}
 
 /**
  * Escape regex metacharacters from an arbitrary username fragment.
@@ -43,11 +57,7 @@ function escapeRegex(value) {
  * @returns {string[]}
  */
 function buildMentionCandidates(botUsername) {
-  if (typeof botUsername !== 'string' || botUsername.trim().length === 0) {
-    return [];
-  }
-
-  const normalized = botUsername.trim().replace(/^@/, '').toLowerCase();
+  const normalized = normalizeComparable(botUsername).replace(/^@/, '');
   if (!normalized) {
     return [];
   }
@@ -89,9 +99,14 @@ function hasMentionTrigger(commentBody, botUsername) {
     return false;
   }
 
+  const normalizedCommentBody = normalizeComparable(commentBody);
+  if (!normalizedCommentBody) {
+    return false;
+  }
+
   return mentionCandidates.some((candidate) => {
-    const mentionPattern = new RegExp(`(^|\\s)@${escapeRegex(candidate)}(?=\\s|$|[.,!?;:])`, 'i');
-    return mentionPattern.test(commentBody);
+    const mentionPattern = new RegExp(`(^|\\s)@${escapeRegex(candidate)}(?=\\s|$|[.,!?;:])`);
+    return mentionPattern.test(normalizedCommentBody);
   });
 }
 
@@ -105,20 +120,21 @@ function hasMentionTrigger(commentBody, botUsername) {
  */
 export function detectTrigger(commentBody, commentAuthor, botUsername) {
   // Guard: never respond to the bot's own comments
-  const normalizedAuthor = typeof commentAuthor === 'string' ? commentAuthor.toLowerCase() : '';
-  const normalizedBotUsername = typeof botUsername === 'string' ? botUsername.toLowerCase() : '';
+  const normalizedAuthor = normalizeComparable(commentAuthor);
+  const normalizedBotUsername = normalizeComparable(botUsername);
 
   if (normalizedAuthor && normalizedBotUsername && normalizedAuthor === normalizedBotUsername) {
     return { triggered: false, type: null, params: {} };
   }
 
   // Guard: empty body — nothing to detect
-  if (typeof commentBody !== 'string' || commentBody.trim().length === 0) {
+  const normalizedBody = normalizeComparable(commentBody);
+  if (!normalizedBody) {
     return { triggered: false, type: null, params: {} };
   }
 
   // Check slash commands first — they are intentional and explicit
-  if (hasSlashCommandTrigger(commentBody)) {
+  if (hasSlashCommandTrigger(normalizedBody)) {
     return {
       triggered: true,
       type: 'slash',
@@ -148,19 +164,21 @@ export function detectTrigger(commentBody, commentAuthor, botUsername) {
  * @returns {TriggerResult}
  */
 export function detectAutoTrigger(assigneeLogin, botUsername) {
-  if (typeof assigneeLogin !== 'string' || assigneeLogin.length === 0) {
+  const normalizedAssignee = normalizeComparable(assigneeLogin);
+  if (!normalizedAssignee) {
     return { triggered: false, type: null, params: {} };
   }
 
-  if (typeof botUsername !== 'string' || botUsername.length === 0) {
+  const normalizedBotUsername = normalizeComparable(botUsername);
+  if (!normalizedBotUsername) {
     return { triggered: false, type: null, params: {} };
   }
 
-  const isBotAssignee = assigneeLogin.toLowerCase() === botUsername.toLowerCase();
+  const isBotAssignee = normalizedAssignee === normalizedBotUsername;
 
   return {
     triggered: isBotAssignee,
-    type: 'auto',
+    type: isBotAssignee ? 'auto' : null,
     params: {},
   };
 }

@@ -34,6 +34,12 @@ import {
  * @param {object} app - The Probot Application instance
  */
 export default function opencodeProApp(app) {
+  if (!app || typeof app !== 'object' || typeof app.on !== 'function') {
+    throw new TypeError(
+      'opencodeProApp: "app" must be a valid Probot application instance exposing app.on(event, handler).',
+    );
+  }
+
   info('OpenCode Pro bot starting...');
 
   // ── Issue events ─────────────────────────────────────────
@@ -90,12 +96,21 @@ export default function opencodeProApp(app) {
 // start a standalone HTTP server on the PORT env var or 3000.
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('/index.js')) {
-  const port = Number(process.env.PORT) || 3000;
+  const startStandaloneServer = async () => {
+    const port = Number(process.env.PORT) || 3000;
 
-  Probot.run({
-    defaultApp: (app) => opencodeProApp(app),
-    port,
-  });
+    try {
+      info(`Starting OpenCode Pro on http://localhost:${port} ...`);
+      await Probot.run({
+        defaultApp: (app) => opencodeProApp(app),
+        port,
+      });
+      info('OpenCode Pro server stopped.');
+    } catch (err) {
+      error('Failed to start OpenCode Pro standalone server', err);
+      process.exitCode = 1;
+    }
+  };
 
-  info(`OpenCode Pro listening on http://localhost:${port}`);
+  void startStandaloneServer();
 }

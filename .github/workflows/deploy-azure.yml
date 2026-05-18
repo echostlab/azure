@@ -1,33 +1,56 @@
 name: Deploy to Azure
 
+concurrency:
+  group: deploy-azure-${{ github.event.inputs.functionAppName || vars.AZURE_FUNCTION_APP_NAME || 'func-opencode-pro' }}
+  cancel-in-progress: false
+
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'infra/**'
+      - 'host.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.funcignore'
+      - '.github/workflows/deploy-azure.yml'
+      - 'eslint.config.js'
   workflow_dispatch:
     inputs:
       location:
         description: 'Azure region'
-        required: true
+        required: false
         type: string
         default: 'eastus'
       resourceGroupName:
         description: 'Resource Group name'
-        required: true
+        required: false
         type: string
         default: 'rg-opencode-pro'
       functionAppName:
         description: 'Function App name (globally unique)'
-        required: true
+        required: false
         type: string
         default: 'func-opencode-pro'
       keyVaultName:
         description: 'Key Vault name (globally unique)'
-        required: true
+        required: false
         type: string
         default: 'kv-opencode-pro'
       storageAccountName:
         description: 'Storage Account name (globally unique)'
-        required: true
+        required: false
         type: string
         default: 'stopencodepro'
+
+env:
+  AZURE_LOCATION: ${{ github.event.inputs.location || vars.AZURE_LOCATION || 'eastus' }}
+  AZURE_RESOURCE_GROUP_NAME: ${{ github.event.inputs.resourceGroupName || vars.AZURE_RESOURCE_GROUP_NAME || 'rg-opencode-pro' }}
+  AZURE_FUNCTION_APP_NAME: ${{ github.event.inputs.functionAppName || vars.AZURE_FUNCTION_APP_NAME || 'func-opencode-pro' }}
+  AZURE_KEY_VAULT_NAME: ${{ github.event.inputs.keyVaultName || vars.AZURE_KEY_VAULT_NAME || 'kv-opencode-pro' }}
+  AZURE_STORAGE_ACCOUNT_NAME: ${{ github.event.inputs.storageAccountName || vars.AZURE_STORAGE_ACCOUNT_NAME || 'stopencodepro' }}
 
 permissions:
   id-token: write
@@ -82,18 +105,26 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Validate deployment configuration
+        run: |
+          test -n "${AZURE_LOCATION}"
+          test -n "${AZURE_RESOURCE_GROUP_NAME}"
+          test -n "${AZURE_FUNCTION_APP_NAME}"
+          test -n "${AZURE_KEY_VAULT_NAME}"
+          test -n "${AZURE_STORAGE_ACCOUNT_NAME}"
+
       - name: Deploy Bicep template
         uses: azure/arm-deploy@a1361c2c2cd398621955b16ca32e01c65ea340f5 # v2
         with:
           scope: subscription
-          region: ${{ github.event.inputs.location }}
+          region: ${{ env.AZURE_LOCATION }}
           template: ./infra/main.bicep
           parameters: |
-            location=${{ github.event.inputs.location }}
-            resourceGroupName=${{ github.event.inputs.resourceGroupName }}
-            functionAppName=${{ github.event.inputs.functionAppName }}
-            keyVaultName=${{ github.event.inputs.keyVaultName }}
-            storageAccountName=${{ github.event.inputs.storageAccountName }}
+            location=${{ env.AZURE_LOCATION }}
+            resourceGroupName=${{ env.AZURE_RESOURCE_GROUP_NAME }}
+            functionAppName=${{ env.AZURE_FUNCTION_APP_NAME }}
+            keyVaultName=${{ env.AZURE_KEY_VAULT_NAME }}
+            storageAccountName=${{ env.AZURE_STORAGE_ACCOUNT_NAME }}
           deploymentName: opencode-pro-${{ github.run_number }}
           failOnStdErr: true
 
@@ -105,6 +136,23 @@ jobs:
       - name: Deploy to Azure Functions
         uses: azure/functions-action@c9cc8ee93d1285e2a17312cc8357dc1775955272 # v1
         with:
-          app-name: ${{ github.event.inputs.functionAppName }}
+          app-name: ${{ env.AZURE_FUNCTION_APP_NAME }}
           package: '.'
           respect-funcignore: true
+
+      - name: Smoke test webhook endpoint
+        env:
+          WEBHOOK_URL: https://${{ env.AZURE_FUNCTION_APP_NAME }}.azurewebsites.net/api/webhook
+        run: |
+          status_code=$(curl --silent --show-error --retry 4 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 --output /tmp/webhook-smoke-response.txt --write-out "%{http_code}" --request POST --header "content-type: application/json" --data '{"smokeTest":true}' "${WEBHOOK_URL}")
+          echo "Webhook smoke test status: ${status_code}"
+
+          case "${status_code}" in
+            200|202|400|401|403)
+              echo "Smoke test passed for ${WEBHOOK_URL}"
+              ;;
+            *)
+              echo "Smoke test failed for ${WEBHOOK_URL} with status ${status_code}"
+              exit 1
+              ;;
+          esac

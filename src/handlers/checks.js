@@ -21,13 +21,15 @@ import { normalizeCheckConclusion } from './review-conclusion.js';
  *
  * @param {import('probot').Context} context - Probot context
  * @param {string} headSha - Commit SHA being reviewed
+ * @param {string | null} [externalId] - Idempotency key for this review run
  * @returns {Promise<number>} The check run ID
  */
-export async function startReview(context, headSha) {
+export async function startReview(context, headSha, externalId = null) {
   const check = await createCheckRun(context, {
     headSha,
     name: 'OpenCode Pro Review',
     status: 'in_progress',
+    externalId,
   });
 
   debug(`Check run started: ${check.id}`);
@@ -45,8 +47,7 @@ export async function startReview(context, headSha) {
  */
 export async function completeReview(context, checkRunId, conclusion, summary) {
   if (!checkRunId) {
-    error('completeReview called without checkRunId');
-    return;
+    throw new Error('completeReview: checkRunId is required');
   }
 
   const normalizedConclusion = normalizeCheckConclusion(conclusion);
@@ -56,14 +57,21 @@ export async function completeReview(context, checkRunId, conclusion, summary) {
     );
   }
 
-  await updateCheckRun(context, checkRunId, {
-    status: 'completed',
-    conclusion: normalizedConclusion,
-    output: {
-      title: 'OpenCode Pro Review',
-      summary,
-    },
-  });
+  try {
+    await updateCheckRun(context, checkRunId, {
+      status: 'completed',
+      conclusion: normalizedConclusion,
+      output: {
+        title: 'OpenCode Pro Review',
+        summary,
+      },
+    });
+  } catch (err) {
+    error(`Failed to update check run ${checkRunId}`, err);
+    throw new Error(`completeReview: unable to complete check run ${checkRunId}`, {
+      cause: err,
+    });
+  }
 
   debug(`Check run ${checkRunId} completed: ${normalizedConclusion}`);
 }

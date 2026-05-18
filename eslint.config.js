@@ -5,7 +5,7 @@ export default [
   {
     files: ['src/**/*.js'],
     languageOptions: {
-      ecmaVersion: 'latest',
+      ecmaVersion: 2023,
       sourceType: 'module',
       globals: {
         Buffer: 'readonly',
