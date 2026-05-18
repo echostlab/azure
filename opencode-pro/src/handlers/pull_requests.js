@@ -11,9 +11,36 @@
 import { loadConfig } from '../config.js';
 import { handleReviewCommentCommand } from './commands.js';
 import { startReview, completeReview } from './checks.js';
+import { mapReviewSummaryToCheckConclusion } from './review-conclusion.js';
 import { generateStream } from '../providers/llm.js';
-import { getPullRequestFiles, getPullRequestDiff } from '../utils/github.js';
+import { getPullRequestFiles } from '../utils/github.js';
+import { filterIgnoredPullRequestFiles } from '../utils/ignore-patterns.js';
 import { debug, error } from '../utils/logger.js';
+
+/** @type {number} */
+const MAX_DIFF_LENGTH = 50000;
+
+/**
+ * Build a reviewable diff string from PR file patches.
+ *
+ * @param {Array<{filename: string, patch: string}>} files
+ * @returns {string}
+ */
+function buildPromptDiff(files) {
+  if (!Array.isArray(files) || files.length === 0) {
+    return '';
+  }
+
+  return files
+    .map(({ filename, patch }) => {
+      const renderedPatch = patch && patch.trim().length > 0
+        ? patch
+        : '@@\n# File changed but patch is unavailable (binary/large file).';
+
+      return [`diff --git a/${filename} b/${filename}`, renderedPatch].join('\n');
+    })
+    .join('\n\n');
+}
 
 /**
  * Run a full PR review: create a check run, stream the AI review into it,
@@ -35,57 +62,69 @@ async function runReview(context, config, pr) {
 
   try {
     const files = await getPullRequestFiles(context, pr.number);
-    const diff = await getPullRequestDiff(context, pr.number);
+    const reviewableFiles = filterIgnoredPullRequestFiles(files, config.ignorePatterns);
 
-    const fileContext = files.map(({ filename, patch }) => ({
+    if (reviewableFiles.length === 0) {
+      await completeReview(
+        context,
+        checkRunId,
+        'neutral',
+        'No reviewable files found after applying `ignorePatterns`.',
+      );
+      debug(`PR review skipped for #${pr.number}: all files ignored`);
+      return;
+    }
+
+    const diff = buildPromptDiff(reviewableFiles);
+
+    const fileContext = reviewableFiles.map(({ filename, patch }) => ({
       filename,
       content: patch,
     }));
 
-const prompt = [
-        `Review this pull request: **${pr.title}**`,
-        '',
-        pr.body ? `Description: ${pr.body}` : '',
-        '',
-        'Please provide a thorough code review covering:',
-        '1. Potential bugs or logic errors',
-        '2. Performance concerns',
-        '3. Security issues',
-        '4. Code style and best practice violations',
-        '5. Suggestions for improvement',
-        '',
-        'Diff:',
-        '```diff',
-        diff.slice(0, 50000),  // Truncate very large diffs
-        '```',
-      ].join('\n');
+    const prompt = [
+      `Review this pull request: **${pr.title}**`,
+      '',
+      pr.body ? `Description: ${pr.body}` : '',
+      '',
+      'Please provide a thorough code review covering:',
+      '1. Potential bugs or logic errors',
+      '2. Performance concerns',
+      '3. Security issues',
+      '4. Code style and best practice violations',
+      '5. Suggestions for improvement',
+      '',
+      'Diff:',
+      '```diff',
+      diff.slice(0, MAX_DIFF_LENGTH),
+      '```',
+    ].join('\n');
 
-      const systemPrompt = [
-        'You are OpenCode Pro performing an automated code review. Be thorough, constructive, and specific. Reference file paths and line numbers when possible. Format your response in markdown.',
-        '',
-        'End your review with exactly one of these tokens on its own line:',
-        'CONCLUSION: APPROVE',
-        'CONCLUSION: REJECT',
-        'CONCLUSION: COMMENT',
-      ].join('\n');
+    const systemPrompt = [
+      'You are OpenCode Pro performing an automated code review. Be thorough, constructive, and specific. Reference file paths and line numbers when possible. Format your response in markdown.',
+      '',
+      'End your review with exactly one of these tokens on its own line:',
+      'CONCLUSION: APPROVE',
+      'CONCLUSION: REJECT',
+      'CONCLUSION: COMMENT',
+    ].join('\n');
 
-      const stream = await generateStream({
-        prompt,
-        system: systemPrompt,
-        files: fileContext,
-        config,
-      });
+    const stream = await generateStream({
+      prompt,
+      system: systemPrompt,
+      files: fileContext,
+      config,
+    });
 
-      let summary = '';
-      for await (const chunk of stream) {
-        summary += chunk;
-      }
+    let summary = '';
+    for await (const chunk of stream) {
+      summary += chunk;
+    }
 
-      const conclusionMatch = summary.match(/CONCLUSION:\s*(APPROVE|REJECT|COMMENT)/i);
-      const conclusion = conclusionMatch ? conclusionMatch[1].toLowerCase() : 'neutral';
+    const conclusion = mapReviewSummaryToCheckConclusion(summary);
 
-      await completeReview(context, checkRunId, conclusion, summary);
-      debug(`PR review completed for #${pr.number}: ${conclusion}`);
+    await completeReview(context, checkRunId, conclusion, summary);
+    debug(`PR review completed for #${pr.number}: ${conclusion}`);
   } catch (err) {
     error(`PR review failed for #${pr.number}`, err);
     await completeReview(

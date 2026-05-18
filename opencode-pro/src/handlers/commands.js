@@ -10,7 +10,13 @@
 import { detectTrigger, detectAutoTrigger } from './trigger.js';
 import { generateStream } from '../providers/llm.js';
 import { createComment, getPullRequestFiles } from '../utils/github.js';
-import { loadConfig, parseModelString } from '../config.js';
+import { loadConfig } from '../config.js';
+import {
+  applyCommandOverrides,
+  CommandOverrideError,
+  stripCommandOverrides,
+} from './command-overrides.js';
+import { isCommandExecutionAuthorized } from './command-authorization.js';
 import { getRepoContext } from '../context/repo-context.js';
 import { manageContext } from '../context/context-manager.js';
 import { debug, error } from '../utils/logger.js';
@@ -19,13 +25,36 @@ import { debug, error } from '../utils/logger.js';
 const MAX_RESPONSE_LENGTH = 60000;
 
 /**
- * Whitelist of acceptable provider names.  User-supplied provider values
- * that do not match this set are silently ignored to prevent injection
- * into internal config paths.
+ * Post a command-override failure message for a single execution.
  *
- * @type {Set<string>}
+ * @param {import('probot').Context} context
+ * @param {number} issueNumber
+ * @param {string} sessionRef
+ * @param {Error} err
+ * @returns {Promise<void>}
  */
-const ALLOWED_PROVIDERS = new Set(['openai', 'anthropic', 'azure', 'openrouter', 'openai-compatible']);
+async function handleOverrideFailure(context, issueNumber, sessionRef, err) {
+  if (!(err instanceof CommandOverrideError)) {
+    throw err;
+  }
+
+  error('Command override rejected for this execution', err);
+  await createComment(
+    context,
+    issueNumber,
+    `❌ I couldn't apply those command overrides for this request. Please verify the command parameters and repository configuration.${sessionRef}`,
+  );
+}
+
+/**
+ * Build a concise authorization failure response.
+ *
+ * @param {string} sessionRef
+ * @returns {string}
+ */
+function buildUnauthorizedMessage(sessionRef) {
+  return `🔒 /oc commands are limited to repository owners, members, and collaborators.${sessionRef}`;
+}
 
 /**
  * Handle an incoming comment — check for triggers, and if found, generate
@@ -49,36 +78,49 @@ export async function handleCommentCommand(context) {
 
   debug(`Trigger detected: type=${trigger.type}, author=${commentAuthor}`);
 
+  // Build session reference for debugging
+  const owner = repository?.owner?.login ?? 'unknown';
+  const repo = repository?.name ?? 'unknown';
+  const runId = context.id ?? 'local';
+  const sessionRef = `\n\n---\n📊 Session reference: \`${owner}/${repo}#${issueNumber}—${runId}\``;
+
+  if (!isCommandExecutionAuthorized(trigger.type, comment.author_association)) {
+    await createComment(context, issueNumber, buildUnauthorizedMessage(sessionRef));
+    return;
+  }
+
   const config = await loadConfig(context);
 
-  // Apply parameter overrides from the comment
-  if (trigger.params.model || trigger.params.provider) {
-    if (trigger.params.model) {
-      const parsed = parseModelString(trigger.params.model);
-      config.model = trigger.params.model;
-      config.provider = parsed.provider;
-      config.modelName = parsed.modelName;
-    }
-    if (trigger.params.provider) {
-      const normalized = trigger.params.provider.toLowerCase();
-      if (ALLOWED_PROVIDERS.has(normalized)) {
-        const [, ...rest] = config.model.split('/');
-        config.provider = normalized;
-        config.model = `${normalized}/${rest.join('/')}`;
-      }
-    }
+  let effectiveConfig;
+  let selectedAgent;
+  let continueConversation;
+
+  try {
+    const applied = applyCommandOverrides(config, trigger.params);
+    effectiveConfig = applied.config;
+    selectedAgent = applied.selectedAgent;
+    continueConversation = applied.continueConversation;
+  } catch (err) {
+    await handleOverrideFailure(context, issueNumber, sessionRef, /** @type {Error} */ (err));
+    return;
   }
 
   // Build enriched prompt with repository context awareness
-  const repoCtx = await getRepoContext(context, issueNumber);
   const basePrompt = buildPrompt(commentBody, trigger);
-  const enrichedPrompt = `${basePrompt}\n\nRepository Context:\n${repoCtx.contextBlock}`;
+  const repoCtx = continueConversation ? await getRepoContext(context, issueNumber) : null;
+  const enrichedPrompt = repoCtx
+    ? `${basePrompt}\n\nRepository Context:\n${repoCtx.contextBlock}`
+    : basePrompt;
 
   // Manage context window — trim if prompt exceeds token budget
-  const maxTokens = config.maxContextTokens || 128000;
+  const maxTokens = effectiveConfig.maxContextTokens || 128000;
   const managedMessages = manageContext(
     [
-      { role: 'system', content: buildSystemPrompt(config), highPriority: true },
+      {
+        role: 'system',
+        content: buildSystemPrompt(effectiveConfig, selectedAgent),
+        highPriority: true,
+      },
       { role: 'user', content: enrichedPrompt },
     ],
     maxTokens,
@@ -90,18 +132,12 @@ export async function handleCommentCommand(context) {
     .map((m) => m.content)
     .join('\n\n') || enrichedPrompt;
 
-  // Build session reference for debugging
-  const owner = repository?.owner?.login ?? 'unknown';
-  const repo = repository?.name ?? 'unknown';
-  const runId = context.id ?? 'local';
-  const sessionRef = `\n\n---\n📊 Session reference: \`${owner}/${repo}#${issueNumber}—${runId}\``;
-
   try {
     const stream = await generateStream({
       prompt: finalPrompt,
-      system: buildSystemPrompt(config),
+      system: buildSystemPrompt(effectiveConfig, selectedAgent),
       files: [],
-      config,
+      config: effectiveConfig,
     });
 
     let responseBody = '';
@@ -194,21 +230,33 @@ export async function handleReviewCommentCommand(context) {
 
   debug(`Review comment trigger: type=${trigger.type}`);
 
+  const owner = context.payload.repository?.owner?.login ?? 'unknown';
+  const repo = context.payload.repository?.name ?? 'unknown';
+  const runId = context.id ?? 'local';
+  const sessionRef = `\n\n---\n📊 Session reference: \`${owner}/${repo}#${pullRequest.number}—${runId}\``;
+
+  if (!isCommandExecutionAuthorized(trigger.type, comment.author_association)) {
+    await createComment(context, pullRequest.number, buildUnauthorizedMessage(sessionRef));
+    return;
+  }
+
   const config = await loadConfig(context);
 
-  if (trigger.params.model) {
-    const parsed = parseModelString(trigger.params.model);
-    config.model = trigger.params.model;
-    config.provider = parsed.provider;
-    config.modelName = parsed.modelName;
-  }
-  if (trigger.params.provider) {
-    const normalized = trigger.params.provider.toLowerCase();
-    if (ALLOWED_PROVIDERS.has(normalized)) {
-      const [, ...rest] = config.model.split('/');
-      config.provider = normalized;
-      config.model = `${normalized}/${rest.join('/')}`;
-    }
+  let effectiveConfig;
+  let selectedAgent;
+
+  try {
+    const applied = applyCommandOverrides(config, trigger.params);
+    effectiveConfig = applied.config;
+    selectedAgent = applied.selectedAgent;
+  } catch (err) {
+    await handleOverrideFailure(
+      context,
+      pullRequest.number,
+      sessionRef,
+      /** @type {Error} */ (err),
+    );
+    return;
   }
 
   // Fetch the PR files for context
@@ -216,17 +264,12 @@ export async function handleReviewCommentCommand(context) {
 
   const prompt = `Review comment on PR #${pullRequest.number}:\n\nComment: ${commentBody}\n\nProvide a detailed response addressing this specific review comment.`;
 
-  const owner = context.payload.repository?.owner?.login ?? 'unknown';
-  const repo = context.payload.repository?.name ?? 'unknown';
-  const runId = context.id ?? 'local';
-  const sessionRef = `\n\n---\n📊 Session reference: \`${owner}/${repo}#${pullRequest.number}—${runId}\``;
-
   try {
     const stream = await generateStream({
       prompt,
-      system: buildSystemPrompt(config),
+      system: buildSystemPrompt(effectiveConfig, selectedAgent),
       files,
-      config,
+      config: effectiveConfig,
     });
 
     let responseBody = '';
@@ -278,8 +321,8 @@ function buildPrompt(body, trigger) {
     cleaned = cleaned.replace(/\B@opencode-pro(?:\[bot\])?\b/gi, '');
   }
 
-  // Also strip param tokens so they don't pollute the prompt
-  cleaned = cleaned.replace(/\b(model|provider|agent)=("[^"]*"|'[^']*'|\S+)/gi, '');
+  // Also strip override tokens so they don't pollute the prompt
+  cleaned = stripCommandOverrides(cleaned);
 
   return cleaned.trim() || 'Please help with this issue.';
 }
@@ -288,10 +331,11 @@ function buildPrompt(body, trigger) {
  * Build a default system prompt for the LLM.
  *
  * @param {import('../config.js').LoadedConfig} config
+ * @param {{ name: string, systemPrompt?: string } | null} [selectedAgent]
  * @returns {string}
  */
-function buildSystemPrompt(config) {
-  return `You are OpenCode Pro, an AI coding assistant bot running as a GitHub App. You help developers by reviewing code, answering questions, and providing actionable suggestions.
+function buildSystemPrompt(config, selectedAgent = null) {
+  const basePrompt = `You are OpenCode Pro, an AI coding assistant bot running as a GitHub App. You help developers by reviewing code, answering questions, and providing actionable suggestions.
 
 Guidelines:
 - Be concise but thorough.
@@ -301,4 +345,16 @@ Guidelines:
 - If you're unsure about something, say so rather than guessing.
 
 You are running with model: ${config.model}.`;
+
+  if (!selectedAgent?.systemPrompt) {
+    return basePrompt;
+  }
+
+  return [
+    `Active agent: ${selectedAgent.name}`,
+    '',
+    selectedAgent.systemPrompt,
+    '',
+    basePrompt,
+  ].join('\n');
 }

@@ -32,9 +32,8 @@ import {
  * Create and configure the OpenCode Pro Probot application.
  *
  * @param {object} app - The Probot Application instance
- * @param {object} opts - Options including getRouter for serverless adapters
  */
-export default function opencodeProApp(app, opts = {}) {
+export default function opencodeProApp(app) {
   info('OpenCode Pro bot starting...');
 
   // ── Issue events ─────────────────────────────────────────

@@ -17,9 +17,9 @@ This guide walks through deploying OpenCode Pro to Azure from scratch. By the en
 ## Step 1: Clone and Set Up Locally
 
 ```bash
-git clone https://github.com/<owner>/opencode-pro.git
-cd opencode-pro
-npm ci
+git clone https://github.com/<owner>/<repo>.git
+cd <repo>/opencode-pro
+npm install
 ```
 
 Copy the environment template and fill in placeholder values:
@@ -42,6 +42,8 @@ Verify the project builds and passes lint:
 npm run lint
 npm test
 ```
+
+> If `opencode-pro` is your repository root (not a subfolder), use `cd <repo>` instead.
 
 ---
 
@@ -197,6 +199,8 @@ The webhook endpoint path is `/api/webhook`. The full webhook URL is:
 ```
 https://func-opencode-pro-<unique>.azurewebsites.net/api/webhook
 ```
+
+This path is produced by Azure Functions `host.json` (`routePrefix: "api"`) plus the function route `webhook` configured in `src/azure-function.js`.
 
 ---
 

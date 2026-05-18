@@ -9,7 +9,8 @@
  */
 
 import { createCheckRun, updateCheckRun } from '../utils/github.js';
-import { debug, error } from '../utils/logger.js';
+import { debug, error, warn } from '../utils/logger.js';
+import { normalizeCheckConclusion } from './review-conclusion.js';
 
 /**
  * @typedef {import('../utils/github.js').createCheckRun} CreateCheckRunResult
@@ -38,7 +39,7 @@ export async function startReview(context, headSha) {
  *
  * @param {import('probot').Context} context - Probot context
  * @param {number} checkRunId - The check run to complete
- * @param {'success' | 'failure' | 'neutral' | 'cancelled' | 'timed_out' | 'action_required'} conclusion - Final status
+ * @param {string} conclusion - Final status
  * @param {string} summary - Markdown summary text
  * @returns {Promise<void>}
  */
@@ -48,14 +49,21 @@ export async function completeReview(context, checkRunId, conclusion, summary) {
     return;
   }
 
+  const normalizedConclusion = normalizeCheckConclusion(conclusion);
+  if (normalizedConclusion !== conclusion) {
+    warn(
+      `Invalid check conclusion "${String(conclusion)}"; falling back to "${normalizedConclusion}"`,
+    );
+  }
+
   await updateCheckRun(context, checkRunId, {
     status: 'completed',
-    conclusion,
+    conclusion: normalizedConclusion,
     output: {
       title: 'OpenCode Pro Review',
       summary,
     },
   });
 
-  debug(`Check run ${checkRunId} completed: ${conclusion}`);
+  debug(`Check run ${checkRunId} completed: ${normalizedConclusion}`);
 }

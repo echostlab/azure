@@ -10,9 +10,9 @@ OpenCode Pro is a GitHub App bot that brings Copilot-like AI assistance directly
 
 ## Features
 
-- **Auto PR Review with inline suggestions** — Automatically reviews every new PR and every pushed commit. Results appear as a Check Run with a structured conclusion (approve, reject, or comment).
+- **Auto PR Review with inline suggestions** — Automatically reviews every new PR and every pushed commit. Results appear as a Check Run with safe, valid GitHub conclusions (`success`, `failure`, `neutral`) mapped from AI output.
 
-- **@mention and /oc slash command support** — Trigger the bot from any comment with `/oc`, `/opencode`, or `@opencode-pro`. Include inline parameters like `model=anthropic/claude-sonnet-4-20250514` to override the default model for a single request.
+- **@mention and /oc slash command support** — Trigger the bot from any comment with `/oc`, `/opencode`, or `@opencode-pro`. Include inline parameters like `model=...`, `provider=...`, `agent=...`, and `continue=true|false` to override behaviour for one execution.
 
 - **Auto-assignment handling** — Assign an issue or PR to the bot (`@opencode-pro`) and it automatically responds with analysis and recommendations. No manual triggering needed.
 
@@ -33,6 +33,12 @@ OpenCode Pro is a GitHub App bot that brings Copilot-like AI assistance directly
 ### 1. Install the GitHub App
 
 Install OpenCode Pro from the [GitHub Marketplace](#) onto your user account or organization. Select which repositories you want the bot to access.
+
+If you are working from this infrastructure repository, the app code lives in `opencode-pro/`:
+
+```bash
+cd opencode-pro
+```
 
 ### 2. Add a config file to your repo
 
@@ -69,6 +75,12 @@ Trigger a review on a specific PR comment:
 
 ```
 /oc review this change for null safety issues model=anthropic/claude-sonnet-4-20250514
+```
+
+Use a configured agent and explicitly continue prior discussion context:
+
+```text
+@opencode-pro please continue with a refactor plan agent=coder continue=true
 ```
 
 Assign the bot to an issue for automatic triage.
@@ -216,6 +228,8 @@ Deploy your own instance using the included Bicep templates and GitHub Actions w
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the step-by-step deployment guide.
 
+For Azure Functions v4, the function entrypoint is `src/azure-function.js` (`package.json#main`), and the webhook route is `/api/webhook`.
+
 ---
 
 ## Project Structure
@@ -232,11 +246,15 @@ opencode-pro/
 │   │   ├── issues.js         # Issue event handlers (open, assign, comment)
 │   │   ├── pull_requests.js  # PR event handlers (open, sync, review, assign)
 │   │   ├── commands.js       # Command parser and router (/oc, @mention)
+│   │   ├── command-overrides.js # Shared parser/applier for model/provider/agent/continue overrides
 │   │   ├── checks.js         # Check Run lifecycle (create, update, complete)
+│   │   ├── review-conclusion.js # Maps AI review conclusions to valid GitHub Check conclusions
 │   │   └── trigger.js        # Trigger detector (slash commands, mentions, auto)
 │   └── utils/
 │       ├── github.js         # GitHub API helpers (comments, diffs, check runs)
+│       ├── ignore-patterns.js # Applies ignorePatterns filtering for PR review files
 │       └── logger.js         # Structured logging with log levels
+├── host.json                 # Azure Functions host config (HTTP routePrefix=api)
 ├── infra/
 │   ├── main.bicep            # Bicep deployment — subscription scope
 │   ├── modules/

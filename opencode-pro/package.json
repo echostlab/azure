@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "src/index.js",
+  "main": "src/azure-function.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "probot": "^13.4.3",
-    "@probot/adapter-azure-functions": "^1.2.1",
+    "@azure/functions": "^4.5.0",
+    "@probot/adapter-azure-functions": "^1.1.0",
     "@octokit/webhooks": "^13.7.0",
     "@octokit/rest": "^21.1.1",
     "@ai-sdk/openai": "^2.0.70",
@@ -25,6 +26,7 @@
     "dotenv": "^17.2.3"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "jest": "^30.2.0",
     "eslint": "^9.30.0",
     "prettier": "^3.5.3"

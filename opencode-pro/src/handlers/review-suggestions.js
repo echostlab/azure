@@ -112,69 +112,6 @@ export function parseSuggestionsFromAI(response) {
 }
 
 /**
- * Post a single inline review suggestion on a pull request.
- *
- * Uses the `pull_request_review` API to create an inline comment at a
- * specific file position within the PR diff.
- *
- * @param {import('probot').Context} context - Probot event context
- * @param {number} pullNumber - PR number
- * @param {ReviewSuggestion} suggestion - The suggestion to post
- * @param {number} [reviewId] - Existing review to add the comment to
- * @returns {Promise<void>}
- */
-async function postSuggestionInline(context, pullNumber, suggestion, reviewId) {
-  if (!suggestion.path || !suggestion.line) {
-    debug('Skipping suggestion with missing path or line');
-    return;
-  }
-
-  try {
-    if (reviewId) {
-      // Add to an existing review
-      await context.octokit.pulls.createReviewComment({
-        ...context.repo(),
-        pull_number: pullNumber,
-        body: suggestion.body,
-        commit_id: await getLatestCommitSha(context, pullNumber),
-        path: suggestion.path,
-        line: suggestion.line,
-        side: suggestion.side ?? 'RIGHT',
-        ...(suggestion.startLine
-          ? {
-              start_line: suggestion.startLine,
-              start_side: suggestion.startSide ?? 'RIGHT',
-            }
-          : {}),
-      });
-    } else {
-      // Create a standalone review with just this comment
-      await context.octokit.pulls.createReview({
-        ...context.repo(),
-        pull_number: pullNumber,
-        event: 'COMMENT',
-        comments: [
-          {
-            path: suggestion.path,
-            line: suggestion.line,
-            side: suggestion.side ?? 'RIGHT',
-            body: suggestion.body,
-            ...(suggestion.startLine
-              ? {
-                  start_line: suggestion.startLine,
-                  start_side: suggestion.startSide ?? 'RIGHT',
-                }
-              : {}),
-          },
-        ],
-      });
-    }
-  } catch (err) {
-    error(`Failed to post suggestion for ${suggestion.path}:${suggestion.line}`, err);
-  }
-}
-
-/**
  * Resolve the latest commit SHA on a pull request.
  *
  * @param {import('probot').Context} context - Probot event context

@@ -9,6 +9,12 @@
 
 import { info, error } from './logger.js';
 
+/** @type {number} */
+const MAX_FILES_PER_PAGE = 100;
+
+/** @type {number} */
+const MAX_FILES_PAGES = 50;
+
 /**
  * Post a comment on an issue or pull request.
  *
@@ -55,6 +61,44 @@ export async function getPullRequestDiff(context, pullNumber) {
 }
 
 /**
+ * List all pull-request files across paginated GitHub API responses.
+ *
+ * @param {(params: Record<string, unknown>) => Promise<{data: unknown}>} listFiles
+ * @param {Record<string, unknown>} baseParams
+ * @returns {Promise<Array<{filename: string, patch: string | null | undefined}>>}
+ */
+export async function listAllPullRequestFiles(listFiles, baseParams) {
+  if (typeof listFiles !== 'function') {
+    throw new Error('listAllPullRequestFiles: listFiles function is required');
+  }
+
+  /** @type {Array<{filename: string, patch: string | null | undefined}>} */
+  const allFiles = [];
+
+  for (let page = 1; page <= MAX_FILES_PAGES; page += 1) {
+    const { data } = await listFiles({
+      ...baseParams,
+      per_page: MAX_FILES_PER_PAGE,
+      page,
+    });
+
+    if (!Array.isArray(data) || data.length === 0) {
+      return allFiles;
+    }
+
+    allFiles.push(...data);
+
+    if (data.length < MAX_FILES_PER_PAGE) {
+      return allFiles;
+    }
+  }
+
+  throw new Error(
+    `listAllPullRequestFiles: exceeded ${MAX_FILES_PAGES} pages while listing PR files`,
+  );
+}
+
+/**
  * Fetch the full tree of changed files in a pull request with their contents.
  *
  * @param {import('probot').Context} context - Probot event context
@@ -66,11 +110,13 @@ export async function getPullRequestFiles(context, pullNumber) {
     throw new Error('getPullRequestFiles: pullNumber is required');
   }
 
-  const { data: files } = await context.octokit.pulls.listFiles({
-    ...context.repo(),
-    pull_number: pullNumber,
-    per_page: 100,
-  });
+  const files = await listAllPullRequestFiles(
+    context.octokit.pulls.listFiles,
+    {
+      ...context.repo(),
+      pull_number: pullNumber,
+    },
+  );
 
   if (!Array.isArray(files)) {
     return [];

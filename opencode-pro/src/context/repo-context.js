@@ -22,6 +22,58 @@ const MAX_TREE_ENTRIES = 500;
 const MAX_COMMITS = 10;
 
 /**
+ * Resolve repository default branch from payload or API.
+ *
+ * @param {import('probot').Context} context
+ * @returns {Promise<string>}
+ */
+async function resolveDefaultBranch(context) {
+  const payloadDefaultBranch = context.payload?.repository?.default_branch;
+  if (typeof payloadDefaultBranch === 'string' && payloadDefaultBranch.trim().length > 0) {
+    return payloadDefaultBranch;
+  }
+
+  try {
+    const { data: repo } = await context.octokit.repos.get(context.repo());
+    if (typeof repo.default_branch === 'string' && repo.default_branch.trim().length > 0) {
+      return repo.default_branch;
+    }
+  } catch {
+    // Best effort — fall back below.
+  }
+
+  return 'main';
+}
+
+/**
+ * Resolve the branch ref SHA for a default branch with safe fallbacks.
+ *
+ * @param {import('probot').Context} context
+ * @param {string} defaultBranch
+ * @returns {Promise<{branch: string, sha: string} | null>}
+ */
+async function resolveBranchRef(context, defaultBranch) {
+  const candidates = [defaultBranch, 'main', 'master']
+    .filter((name, index, all) => name && all.indexOf(name) === index);
+
+  for (const branch of candidates) {
+    try {
+      const { data: ref } = await context.octokit.git.getRef(
+        context.repo({ ref: `heads/${branch}` }),
+      );
+
+      if (ref?.object?.sha) {
+        return { branch, sha: ref.object.sha };
+      }
+    } catch {
+      // Try next fallback branch.
+    }
+  }
+
+  return null;
+}
+
+/**
  * Map of file extensions to language names for detection.
  *
  * @type {Record<string, string>}
@@ -128,15 +180,13 @@ function detectLanguages(filePaths) {
  * if the tree is too large.  Limits the result to {@link MAX_TREE_ENTRIES}.
  *
  * @param {import('probot').Context} context - Probot event context
+ * @param {string} defaultBranch - Repository default branch
  * @returns {Promise<string[]>} Array of file paths
  */
-async function fetchFileTree(context) {
+async function fetchFileTree(context, defaultBranch) {
   try {
-    const { data: ref } = await context.octokit.git.getRef(
-      context.repo({ ref: 'heads/main' }),
-    );
-
-    if (!ref?.object?.sha) {
+    const branchRef = await resolveBranchRef(context, defaultBranch);
+    if (!branchRef) {
       warn('Could not resolve default branch ref');
       return [];
     }
@@ -145,13 +195,13 @@ async function fetchFileTree(context) {
     let tree;
     try {
       const { data } = await context.octokit.git.getTree(
-        context.repo({ tree_sha: ref.object.sha, recursive: '1' }),
+        context.repo({ tree_sha: branchRef.sha, recursive: '1' }),
       );
       tree = data.tree;
     } catch {
       // Recursive tree too large — fall back to non-recursive
       const { data } = await context.octokit.git.getTree(
-        context.repo({ tree_sha: ref.object.sha }),
+        context.repo({ tree_sha: branchRef.sha }),
       );
       tree = data.tree;
     }
@@ -189,12 +239,13 @@ async function fetchFileTree(context) {
  * Fetch the most recent commits on the default branch.
  *
  * @param {import('probot').Context} context - Probot event context
+ * @param {string} defaultBranch - Repository default branch
  * @returns {Promise<Array<{sha: string, message: string, author: string, date: string}>>}
  */
-async function fetchRecentCommits(context) {
+async function fetchRecentCommits(context, defaultBranch) {
   try {
     const { data: commits } = await context.octokit.repos.listCommits(
-      context.repo({ per_page: MAX_COMMITS }),
+      context.repo({ per_page: MAX_COMMITS, sha: defaultBranch }),
     );
 
     if (!Array.isArray(commits)) {
@@ -357,9 +408,11 @@ function formatDiscussion(comments) {
 export async function getRepoContext(context, issueNumber) {
   debug('Building repository context...');
 
+  const defaultBranch = await resolveDefaultBranch(context);
+
   const [fileTree, recentCommits, discussion] = await Promise.all([
-    fetchFileTree(context),
-    fetchRecentCommits(context),
+    fetchFileTree(context, defaultBranch),
+    fetchRecentCommits(context, defaultBranch),
     issueNumber ? fetchDiscussionComments(context, issueNumber) : Promise.resolve([]),
   ]);
 
@@ -375,7 +428,7 @@ export async function getRepoContext(context, issueNumber) {
     formatDiscussion(discussion),
   ].join('\n');
 
-  debug(`Repo context built: ${fileTree.length} files, ${recentCommits.length} commits, ${languages.length} languages`);
+  debug(`Repo context built from ${defaultBranch}: ${fileTree.length} files, ${recentCommits.length} commits, ${languages.length} languages`);
 
   return {
     fileTree,
