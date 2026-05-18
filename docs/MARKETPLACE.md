@@ -112,9 +112,9 @@ No usage tracking, no seat licenses, no per-repository fees. Install on as many 
 | Link | URL |
 |------|-----|
 | **Source code** | `https://github.com/anomalyco/opencode-pro` |
-| **Documentation** | `https://github.com/anomalyco/opencode-pro/blob/main/opencode-pro/README.md` |
-| **Configuration guide** | `https://github.com/anomalyco/opencode-pro/blob/main/opencode-pro/docs/CONFIGURATION.md` |
-| **Deployment guide** | `https://github.com/anomalyco/opencode-pro/blob/main/opencode-pro/docs/DEPLOYMENT.md` |
+| **Documentation** | `https://github.com/anomalyco/opencode-pro/blob/main/README.md` |
+| **Configuration guide** | `https://github.com/anomalyco/opencode-pro/blob/main/docs/CONFIGURATION.md` |
+| **Deployment guide** | `https://github.com/anomalyco/opencode-pro/blob/main/docs/DEPLOYMENT.md` |
 | **Issue tracker** | `https://github.com/anomalyco/opencode-pro/issues` |
 | **Privacy policy** | `https://github.com/anomalyco/opencode-pro/blob/main/PRIVACY.md` |
 | **Status page** | `https://github.com/anomalyco/opencode-pro#status` |
@@ -154,4 +154,4 @@ After installation, verify the bot is working:
 3. Create an issue with `/oc hello` in the body
 4. Confirm the bot responds within a few seconds
 
-If no response appears, check the [troubleshooting section in the deployment guide](https://github.com/anomalyco/opencode-pro/blob/main/opencode-pro/docs/DEPLOYMENT.md#troubleshooting).
+If no response appears, check the [troubleshooting section in the deployment guide](https://github.com/anomalyco/opencode-pro/blob/main/docs/DEPLOYMENT.md#troubleshooting).

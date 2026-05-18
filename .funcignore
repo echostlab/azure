@@ -1,0 +1,21 @@
+# Source control and CI
+.git/
+.github/
+
+# Local/dev configuration
+.opencode/
+.env
+.env.*
+coverage/
+
+# Documentation and infra source
+docs/
+infra/
+
+# Tests and editor artifacts
+**/*.test.js
+*.md
+.vscode/
+
+# Legacy path kept for safety after root migration
+opencode-pro/

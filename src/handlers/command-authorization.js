@@ -7,9 +7,10 @@
  */
 
 /**
- * Trusted author associations allowed to execute slash commands.
+ * Trusted author associations allowed to execute command triggers.
  *
- * Policy: `/oc` is limited to repository OWNER, MEMBER, and COLLABORATOR.
+ * Policy: slash commands and mentions are limited to repository OWNER,
+ * MEMBER, and COLLABORATOR.
  *
  * @type {Set<string>}
  */
@@ -36,16 +37,20 @@ export function isTrustedAuthorAssociation(authorAssociation) {
 /**
  * Determine whether a detected command trigger is authorized to execute.
  *
- * Slash commands require trusted association. Mention-based triggers keep
- * existing behaviour and are not blocked by this policy gate.
+ * Slash commands and mention triggers require trusted association. Auto
+ * triggers are handled by explicit assignment events and remain allowed.
  *
  * @param {'slash' | 'mention' | 'auto' | null} triggerType
  * @param {string | undefined | null} authorAssociation
  * @returns {boolean}
  */
 export function isCommandExecutionAuthorized(triggerType, authorAssociation) {
-  if (triggerType !== 'slash') {
+  if (triggerType === 'auto') {
     return true;
+  }
+
+  if (triggerType !== 'slash' && triggerType !== 'mention') {
+    return false;
   }
 
   return isTrustedAuthorAssociation(authorAssociation);

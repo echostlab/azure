@@ -23,16 +23,14 @@ This project follows the [Contributor Covenant Code of Conduct](https://www.cont
 ```bash
 # Clone the repository
 git clone https://github.com/<owner>/<repo>.git
-cd <repo>/opencode-pro
+cd <repo>
 
 # Install dependencies
-npm install
+npm ci
 
 # Copy and configure environment variables
 cp .env.example .env
 ```
-
-If your checkout already has `opencode-pro` as the repository root, use `cd <repo>`.
 
 Edit `.env` with at least one LLM provider API key:
 

@@ -18,8 +18,8 @@ This guide walks through deploying OpenCode Pro to Azure from scratch. By the en
 
 ```bash
 git clone https://github.com/<owner>/<repo>.git
-cd <repo>/opencode-pro
-npm install
+cd <repo>
+npm ci
 ```
 
 Copy the environment template and fill in placeholder values:
@@ -42,8 +42,6 @@ Verify the project builds and passes lint:
 npm run lint
 npm test
 ```
-
-> If `opencode-pro` is your repository root (not a subfolder), use `cd <repo>` instead.
 
 ---
 

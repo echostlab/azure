@@ -53,7 +53,7 @@ async function handleOverrideFailure(context, issueNumber, sessionRef, err) {
  * @returns {string}
  */
 function buildUnauthorizedMessage(sessionRef) {
-  return `🔒 /oc commands are limited to repository owners, members, and collaborators.${sessionRef}`;
+  return `🔒 Slash commands and @mentions are limited to repository owners, members, and collaborators.${sessionRef}`;
 }
 
 /**

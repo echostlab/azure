@@ -23,8 +23,18 @@ describe('command authorization policy', () => {
     expect(isCommandExecutionAuthorized('slash', undefined)).toBe(false);
   });
 
-  it('does not block mention triggers with untrusted associations', () => {
-    expect(isCommandExecutionAuthorized('mention', 'NONE')).toBe(true);
-    expect(isCommandExecutionAuthorized(null, 'NONE')).toBe(true);
+  it('blocks mention triggers from untrusted authors', () => {
+    expect(isCommandExecutionAuthorized('mention', 'NONE')).toBe(false);
+    expect(isCommandExecutionAuthorized('mention', undefined)).toBe(false);
+  });
+
+  it('allows trusted mention triggers', () => {
+    expect(isCommandExecutionAuthorized('mention', 'OWNER')).toBe(true);
+    expect(isCommandExecutionAuthorized('mention', 'MEMBER')).toBe(true);
+  });
+
+  it('allows explicit auto triggers and rejects unknown trigger kinds', () => {
+    expect(isCommandExecutionAuthorized('auto', 'NONE')).toBe(true);
+    expect(isCommandExecutionAuthorized(null, 'OWNER')).toBe(false);
   });
 });
