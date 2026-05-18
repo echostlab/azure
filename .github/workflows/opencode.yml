@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   detect-trigger:
-    runs-on: mp
+    runs-on: run
 
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
