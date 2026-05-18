@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   detect-trigger:
-    runs-on: run
+    runs-on: ubuntu-latest
 
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
@@ -49,17 +49,17 @@ jobs:
           set -euo pipefail
 
           resolve_model() {
-            local input="${1:-FW-DeepSeek-V4-Pro}"
+            local input="${1:-gpt-5.3-codex}"
 
             case "$input" in
-              FW-DeepSeek-V4-Pro)
-                echo "deepseek/FW-DeepSeek-V4-Pro"
+              gpt-5.3-codex)
+                echo "azure-foundry/gpt-5.3-codex"
                 ;;
-              deepseek/*)
+              azure-foundry/*)
                 echo "$input"
                 ;;
               *)
-                echo "deepseek/FW-DeepSeek-V4-Pro"
+                echo "azure-foundry/gpt-5.3-codex"
                 ;;
             esac
           }
@@ -71,7 +71,7 @@ jobs:
           SHOULD_RUN="false"
           RUN_KIND="none"
 
-          FULL_MODEL="$(resolve_model "FW-DeepSeek-V4-Pro")"
+          FULL_MODEL="$(resolve_model "gpt-5.3-codex")"
 
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             SHOULD_RUN="true"
@@ -83,7 +83,7 @@ jobs:
 
               SELECTED_MODEL="$(echo "$COMMENT_BODY" | grep -oiP 'model=\K\S+' | head -1 || true)"
 
-              FULL_MODEL="$(resolve_model "${SELECTED_MODEL:-FW-DeepSeek-V4-Pro}")"
+              FULL_MODEL="$(resolve_model "${SELECTED_MODEL:-gpt-5.3-codex}")"
 
               if [[ "$HAS_PR" == "true" ]]; then
                 SHOULD_RUN="true"
@@ -220,6 +220,7 @@ jobs:
           OPENCODE_CONFIG: ${{ env.OPENCODE_CONFIG }}
           OPENCODE_CONFIG_DIR: ${{ env.OPENCODE_CONFIG_DIR }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_RESOURCE_NAME: "openslab-resource"
         with:
           model: ${{ needs.detect-trigger.outputs.model }}
           prompt: ${{ steps.compose.outputs.prompt }}
