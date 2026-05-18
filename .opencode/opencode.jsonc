@@ -1,25 +1,26 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "deepseek": {
+    "azure-foundry": {
+      "npm": "@ai-sdk/openai",
       "options": {
-        "baseURL": "https://openslab-resource.services.ai.azure.com/openai/v1",
-        "apiKey": "{env:AZURE_OPENAI_API_KEY}"
+        "apiKey": "{env:AZURE_OPENAI_API_KEY}",
+        "baseURL": "https://openslab-resource.openai.azure.com/openai/v1"
       },
       "models": {
-        "FW-DeepSeek-V4-Pro": {
+        "gpt-5.3-codex": {
+          "Name": "GPT 5.3-codex (Azure)"
         }
       }
     }
   },
-  "model": "deepseek/FW-DeepSeek-V4-Pro",
-  "small_model": "deepseek/FW-DeepSeek-V4-Pro",
+  "model": "azure-foundry/gpt-5.3-codex",
+  "small_model": "azure-foundry/gpt-5.3-codex",
   "agent": {
     "plan": {
-      "model": "deepseek/FW-DeepSeek-V4-Pro",
+      "model": "azure-foundry/gpt-5.3-codex",
       "temperature": 0.3,
       "reasoningEffort": "high",
-			"textVerbosity": "low",
 			"permission": {
 				"edit": "deny",
 				"write": "deny",
@@ -31,10 +32,9 @@
 			}
     },
     "build": {
-      "model": "deepseek/FW-DeepSeek-V4-Pro",
+      "model": "azure-foundry/gpt-5.3-codex",
       "temperature": 0.3,
       "reasoningEffort": "high",
-			"textVerbosity": "low",
 			"prompt": "You are a **build orchestrator**. You coordinate implementation through delegation - you do NOT implement directly.\\\\\\\\n\\\\\\\\n## Your Role\\\\\\\\n- Delegate implementation to `coder`\\\\\\\\n- Delegate documentation to `scribe`\\\\\\\\n- Delegate codebase analysis to `explore`\\\\\\\\n- Delegate external research to `researcher`\\\\\\\\n- Interpret results and decide next steps\\\\\\\\n\\\\\\\\n## Critical Constraint\\\\\\\\nYou CANNOT edit files or run commands directly. For ALL implementation and verification, delegate to `coder`.",
 			"permission": {
 				"edit": "deny",
@@ -47,10 +47,9 @@
 			}
     },
     "coder": {
-      "model": "deepseek/FW-DeepSeek-V4-Pro",
+      "model": "azure-foundry/gpt-5.3-codex",
       "temperature": 0.2,
       "reasoningEffort": "high",
-			"textVerbosity": "low",
 			"permission": {
 				"context7_*": "deny",
 				"exa_*": "deny",
@@ -66,10 +65,9 @@
 			}
     },
     "explore": {
-      "model": "deepseek/FW-DeepSeek-V4-Pro",
+      "model": "azure-foundry/gpt-5.3-codex",
       "temperature": 0.2,
       "reasoningEffort": "low",
-			"textVerbosity": "low",
 			"permission": {
 				"edit": "deny",
 				"write": "deny",
@@ -105,10 +103,9 @@
 			}
     },
     "researcher": {
-      "model": "deepseek/FW-DeepSeek-V4-Pro",
+      "model": "azure-foundry/gpt-5.3-codex",
       "temperature": 0.4,
       "reasoningEffort": "high",
-			"textVerbosity": "medium",
 			"permission": {
 				"context7_*": "allow",
 				"exa_*": "allow",
@@ -162,10 +159,9 @@
 			}
     },
     "scribe": {
-      "model": "deepseek/FW-DeepSeek-V4-Pro",
+      "model": "azure-foundry/gpt-5.3-codex",
       "temperature": 1,
       "reasoningEffort": "low",
-			"textVerbosity": "high",
 			"permission": {
 				"bash": {
 					"*": "deny"
@@ -179,10 +175,9 @@
 			}
     },
     "reviewer": {
-      "model": "deepseek/FW-DeepSeek-V4-Pro",
+      "model": "azure-foundry/gpt-5.3-codex",
       "temperature": 0.1,
       "reasoningEffort": "high",
-			"textVerbosity": "medium",
 			"permission": {
 				"edit": "deny",
 				"write": "deny",
