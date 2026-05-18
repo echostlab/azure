@@ -39,10 +39,23 @@ on:
         required: false
         default: "github-runner-vm"
       vmSize:
-        description: "VM size (SKU)"
+        description: "VM size (SKU). Use 'auto' to select the highest vCPU size allowed by regional quota (default)."
         type: string
         required: false
-        default: "Standard_B2als_v2"
+        default: "auto"
+      runnerScope:
+        description: "Runner scope. Organization is the default and recommended mode."
+        type: choice
+        required: true
+        default: "organization"
+        options:
+          - organization
+          - repository
+      githubOrganization:
+        description: "Target GitHub organization. Used for organization scope (defaults to repository owner if empty)."
+        type: string
+        required: false
+        default: ""
       adminUsername:
         description: "Admin username for the VM"
         type: string
@@ -53,9 +66,9 @@ on:
         type: string
         required: true
       githubRepo:
-        description: "GitHub repository (owner/repo format)"
+        description: "GitHub repository (owner/repo). Optional for repository scope (defaults to current repository)."
         type: string
-        required: true
+        required: false
         default: ""
 
 concurrency:
@@ -65,12 +78,11 @@ concurrency:
 permissions:
   id-token: write
   contents: read
-  actions: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -83,7 +95,232 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Create resource group if not exists
+      - name: Resolve runner target
+        env:
+          RUNNER_SCOPE_INPUT: ${{ github.event.inputs.runnerScope }}
+          GITHUB_ORG_INPUT: ${{ github.event.inputs.githubOrganization }}
+          GITHUB_REPO_INPUT: ${{ github.event.inputs.githubRepo }}
+          DEFAULT_ORG: ${{ github.repository_owner }}
+          DEFAULT_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          scope="$(printf '%s' "${RUNNER_SCOPE_INPUT:-organization}" | tr '[:upper:]' '[:lower:]')"
+          org="${GITHUB_ORG_INPUT:-${DEFAULT_ORG}}"
+          repo="${GITHUB_REPO_INPUT:-${DEFAULT_REPO}}"
+          tag_repository="${DEFAULT_REPO}"
+
+          if [[ -z "${org}" ]]; then
+            echo "ERROR: githubOrganization could not be resolved."
+            exit 1
+          fi
+
+          case "${scope}" in
+            organization)
+              runner_url="https://github.com/${org}"
+              api_url="https://api.github.com/orgs/${org}/actions/runners/registration-token"
+              runner_settings_url="${runner_url}/settings/actions/runners"
+              runner_target="organization/${org}"
+              ;;
+            repository)
+              if [[ -z "${repo}" || "${repo}" != */* ]]; then
+                echo "ERROR: repository scope requires githubRepo in owner/repo format."
+                exit 1
+              fi
+              runner_url="https://github.com/${repo}"
+              api_url="https://api.github.com/repos/${repo}/actions/runners/registration-token"
+              runner_settings_url="${runner_url}/settings/actions/runners"
+              runner_target="repository/${repo}"
+              tag_repository="${repo}"
+              ;;
+            *)
+              echo "ERROR: unsupported runnerScope '${scope}'. Use organization or repository."
+              exit 1
+              ;;
+          esac
+
+          echo "Runner target resolved: ${runner_target}"
+          echo "Runner URL: ${runner_url}"
+
+          {
+            echo "RUNNER_SCOPE=${scope}"
+            echo "RUNNER_TARGET=${runner_target}"
+            echo "RUNNER_URL=${runner_url}"
+            echo "RUNNER_API_URL=${api_url}"
+            echo "RUNNER_SETTINGS_URL=${runner_settings_url}"
+            echo "TAG_REPOSITORY=${tag_repository}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Select VM size from regional quota
+        uses: azure/cli@v2
+        id: vm_size
+        env:
+          LOCATION: ${{ github.event.inputs.location }}
+          VM_SIZE_INPUT: ${{ github.event.inputs.vmSize }}
+        with:
+          inlineScript: |
+            set -euo pipefail
+
+            echo "Evaluating VM size availability in region: ${LOCATION}"
+            az vm list-skus \
+              --location "${LOCATION}" \
+              --resource-type virtualMachines \
+              --output json > /tmp/vm-skus.json
+
+            az vm list-usage \
+              --location "${LOCATION}" \
+              --output json > /tmp/vm-usage.json
+
+            python - <<'PY'
+            import json
+            import os
+            import sys
+
+            sku_path = '/tmp/vm-skus.json'
+            usage_path = '/tmp/vm-usage.json'
+            manual_input = (os.getenv('VM_SIZE_INPUT') or '').strip()
+            auto_mode = manual_input == '' or manual_input.lower() == 'auto'
+
+            with open(sku_path, 'r', encoding='utf-8') as f:
+                skus = json.load(f)
+
+            with open(usage_path, 'r', encoding='utf-8') as f:
+                usage = json.load(f)
+
+            quota_available = {}
+            for item in usage:
+                key = ((item.get('name') or {}).get('value'))
+                if not key:
+                    continue
+                limit = int(item.get('limit', 0) or 0)
+                current = int(item.get('currentValue', 0) or 0)
+                quota_available[key] = max(limit - current, 0)
+
+            total_vcpu_available = quota_available.get('cores', 0)
+
+            def parse_vcpus(capabilities):
+                cap_map = {cap.get('name'): cap.get('value') for cap in (capabilities or [])}
+                for key in ('vCPUsAvailable', 'vCPUs'):
+                    raw = cap_map.get(key)
+                    if raw is None:
+                        continue
+                    try:
+                        return int(float(raw))
+                    except (TypeError, ValueError):
+                        continue
+                return 0
+
+            def parse_memory_gb(capabilities):
+                cap_map = {cap.get('name'): cap.get('value') for cap in (capabilities or [])}
+                raw = cap_map.get('MemoryGB')
+                if raw is None:
+                    return 0.0
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    return 0.0
+
+            def is_location_restricted(restrictions):
+                for restriction in restrictions or []:
+                    reason = (restriction.get('reasonCode') or '').lower()
+                    restriction_type = (restriction.get('type') or '').lower()
+                    if reason == 'notavailableforsubscription' and restriction_type in ('', 'location'):
+                        return True
+                    if reason == 'quotaid':
+                        return True
+                return False
+
+            candidates = []
+            for sku in skus:
+                name = sku.get('name') or ''
+                if not name.startswith('Standard_'):
+                    continue
+                if 'Promo' in name:
+                    continue
+                if is_location_restricted(sku.get('restrictions')):
+                    continue
+
+                family = sku.get('family') or ''
+                vcpus = parse_vcpus(sku.get('capabilities'))
+                memory_gb = parse_memory_gb(sku.get('capabilities'))
+                if vcpus <= 0:
+                    continue
+
+                family_available = quota_available.get(family, total_vcpu_available)
+                has_quota = total_vcpu_available >= vcpus and family_available >= vcpus
+
+                candidates.append({
+                    'name': name,
+                    'family': family,
+                    'vcpus': vcpus,
+                    'memory_gb': memory_gb,
+                    'family_available': family_available,
+                    'has_quota': has_quota,
+                })
+
+            if not candidates:
+                print('ERROR: no VM sizes are available in the selected region.', file=sys.stderr)
+                sys.exit(1)
+
+            if auto_mode:
+                valid = [item for item in candidates if item['has_quota']]
+                if not valid:
+                    print(
+                        f"ERROR: no VM size fits available quota in region. "
+                        f"Total regional vCPU available: {total_vcpu_available}.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                selected = sorted(
+                    valid,
+                    key=lambda item: (item['vcpus'], item['memory_gb'], item['name']),
+                    reverse=True,
+                )[0]
+                selection_mode = 'auto'
+            else:
+                selected = next((item for item in candidates if item['name'].lower() == manual_input.lower()), None)
+                if selected is None:
+                    top_examples = ', '.join(sorted(item['name'] for item in candidates)[:10])
+                    print(
+                        f"ERROR: requested vmSize '{manual_input}' is not available in this region. "
+                        f"Examples: {top_examples}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                if not selected['has_quota']:
+                    print(
+                        f"ERROR: requested vmSize '{selected['name']}' requires {selected['vcpus']} vCPUs, "
+                        f"but available quota is total={total_vcpu_available}, "
+                        f"family={selected['family_available']} ({selected['family']}).",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                selection_mode = 'manual'
+
+            summary = (
+                f"Selected VM size: {selected['name']} ({selected['vcpus']} vCPUs, "
+                f"{selected['memory_gb']} GB RAM), family={selected['family']}, mode={selection_mode}."
+            )
+            print(summary)
+
+            env_file = os.environ['GITHUB_ENV']
+            output_file = os.environ['GITHUB_OUTPUT']
+            with open(env_file, 'a', encoding='utf-8') as f:
+                f.write(f"SELECTED_VM_SIZE={selected['name']}\n")
+                f.write(f"SELECTED_VM_VCPUS={selected['vcpus']}\n")
+                f.write(f"SELECTED_VM_MEMORY_GB={selected['memory_gb']}\n")
+                f.write(f"VM_SIZE_FAMILY={selected['family']}\n")
+                f.write(f"FAMILY_VCPU_AVAILABLE={selected['family_available']}\n")
+                f.write(f"TOTAL_VCPU_AVAILABLE={total_vcpu_available}\n")
+                f.write(f"VM_SIZE_SELECTION_MODE={selection_mode}\n")
+
+            with open(output_file, 'a', encoding='utf-8') as f:
+                f.write(f"name={selected['name']}\n")
+                f.write(f"vcpus={selected['vcpus']}\n")
+                f.write(f"mode={selection_mode}\n")
+            PY
+
+      - name: Recreate deployment resource group
         uses: azure/cli@v2
         env:
           RG_NAME: ${{ github.event.inputs.resourceGroupName }}
@@ -91,17 +328,101 @@ jobs:
         with:
           inlineScript: |
             set -euo pipefail
-            az group create \
-              --name "$RG_NAME" \
-              --location "$LOCATION"
 
-      - name: Prepare cloud-init configuration
+            rg_exists="$(az group exists --name "${RG_NAME}" --output tsv)"
+            if [[ "${rg_exists}" == "true" ]]; then
+              echo "Resource group '${RG_NAME}' already exists. Deleting for clean redeploy..."
+              az group delete --name "${RG_NAME}" --yes --no-wait
+              az group wait --name "${RG_NAME}" --deleted --interval 20 --timeout 1800
+              echo "Resource group '${RG_NAME}' deleted."
+            else
+              echo "Resource group '${RG_NAME}' does not exist. Creating fresh resource group."
+            fi
+
+            az group create --name "${RG_NAME}" --location "${LOCATION}" --output none
+            rg_id="$(az group show --name "${RG_NAME}" --query id --output tsv)"
+            echo "RESOURCE_GROUP_ID=${rg_id}" >> "${GITHUB_ENV}"
+
+      - name: Request runner registration token (just-in-time)
+        env:
+          GH_PAT: ${{ secrets.GH_RUNNER_ORG_PAT }}
+          RUNNER_TARGET: ${{ env.RUNNER_TARGET }}
+          RUNNER_API_URL: ${{ env.RUNNER_API_URL }}
         run: |
           set -euo pipefail
-          sed -e "s|__GH_REPO__|${{ github.event.inputs.githubRepo }}|g" \
-              -e "s|__GH_TOKEN__|${{ secrets.GH_RUNNER_TOKEN }}|g" \
+
+          if [[ -z "${GH_PAT}" ]]; then
+            echo "ERROR: required secret GH_RUNNER_ORG_PAT is not configured."
+            exit 1
+          fi
+
+          if [[ -z "${RUNNER_API_URL}" || -z "${RUNNER_TARGET}" ]]; then
+            echo "ERROR: runner API target is not resolved."
+            exit 1
+          fi
+
+          echo "::add-mask::${GH_PAT}"
+
+          response_file="$(mktemp)"
+          http_code="$(curl -sS -o "${response_file}" -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${GH_PAT}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${RUNNER_API_URL}")"
+
+          if [[ "${http_code}" -lt 200 || "${http_code}" -ge 300 ]]; then
+            echo "ERROR: failed to request registration token for ${RUNNER_TARGET} (HTTP ${http_code})."
+            python -c 'import json,sys; payload=json.load(open(sys.argv[1], "r", encoding="utf-8")); print("GitHub API message: {}".format(payload.get("message") or "No API error message returned."))' "${response_file}" || true
+            exit 1
+          fi
+
+          mapfile -t parsed < <(python -c 'import json,sys; payload=json.load(open(sys.argv[1], "r", encoding="utf-8")); print(payload.get("token", "")); print(payload.get("expires_at", ""))' "${response_file}")
+
+          reg_token="${parsed[0]:-}"
+          token_expires_at="${parsed[1]:-unknown}"
+
+          if [[ -z "${reg_token}" ]]; then
+            echo "ERROR: GitHub API response did not include a registration token."
+            exit 1
+          fi
+
+          echo "::add-mask::${reg_token}"
+          echo "Registration token acquired for ${RUNNER_TARGET}. Expires at: ${token_expires_at}"
+
+          {
+            echo "RUNNER_REG_TOKEN=${reg_token}"
+            echo "RUNNER_TOKEN_EXPIRES_AT=${token_expires_at}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Prepare cloud-init configuration
+        env:
+          RUNNER_URL: ${{ env.RUNNER_URL }}
+          RUNNER_REG_TOKEN: ${{ env.RUNNER_REG_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${RUNNER_URL}" ]]; then
+            echo "ERROR: RUNNER_URL is empty."
+            exit 1
+          fi
+
+          if [[ -z "${RUNNER_REG_TOKEN}" ]]; then
+            echo "ERROR: RUNNER_REG_TOKEN is empty."
+            exit 1
+          fi
+
+          echo "::add-mask::${RUNNER_REG_TOKEN}"
+
+          sed -e "s|__GH_RUNNER_URL__|${RUNNER_URL}|g" \
+              -e "s|__REG_TOKEN__|${RUNNER_REG_TOKEN}|g" \
               cloud-init-runner.yml > /tmp/cloud-init-processed.yml
-          echo "CLOUD_INIT_B64=$(base64 -w0 /tmp/cloud-init-processed.yml)" >> $GITHUB_ENV
+
+          if grep -q "__GH_RUNNER_URL__\|__REG_TOKEN__" /tmp/cloud-init-processed.yml; then
+            echo "ERROR: cloud-init still contains unresolved placeholders."
+            exit 1
+          fi
+
+          echo "CLOUD_INIT_B64=$(base64 -w 0 /tmp/cloud-init-processed.yml)" >> "${GITHUB_ENV}"
 
       - name: Deploy Bicep template
         uses: azure/cli@v2
@@ -114,14 +435,37 @@ jobs:
           SUBNET_PREFIX: ${{ github.event.inputs.subnetAddressPrefix }}
           NSG_NAME: ${{ github.event.inputs.vnetName }}-nsg
           VM_NAME: ${{ github.event.inputs.vmName }}
-          VM_SIZE: ${{ github.event.inputs.vmSize }}
+          VM_SIZE: ${{ env.SELECTED_VM_SIZE }}
           ADMIN_USER: ${{ github.event.inputs.adminUsername }}
           ADMIN_SSH_KEY: ${{ github.event.inputs.adminSSHKey }}
-          GH_REPO: ${{ github.event.inputs.githubRepo }}
-          TAGS: '{"purpose":"github-runner","managedBy":"github-actions","repo":"${{ github.event.inputs.githubRepo }}"}'
+          RUNNER_SCOPE: ${{ env.RUNNER_SCOPE }}
+          RUNNER_TARGET: ${{ env.RUNNER_TARGET }}
+          REPOSITORY_CONTEXT: ${{ env.TAG_REPOSITORY }}
         with:
           inlineScript: |
             set -euo pipefail
+
+            if [[ -z "${VM_SIZE}" ]]; then
+              echo "ERROR: VM_SIZE is empty after quota selection."
+              exit 1
+            fi
+
+            tags_json="$(python - <<'PY'
+            import json
+            import os
+
+            tags = {
+                'purpose': 'github-runner',
+                'managedBy': 'github-actions',
+                'scope': os.getenv('RUNNER_SCOPE', ''),
+                'target': os.getenv('RUNNER_TARGET', ''),
+                'repository': os.getenv('REPOSITORY_CONTEXT', ''),
+            }
+            print(json.dumps(tags, separators=(',', ':')))
+            PY
+            )"
+
+            echo "Deploying resources with VM size ${VM_SIZE}..."
             az deployment group create \
               --name "actions-runner-deployment" \
               --resource-group "$RG_NAME" \
@@ -137,18 +481,130 @@ jobs:
                 vmSize="$VM_SIZE" \
                 adminUsername="$ADMIN_USER" \
                 adminSSHKey="${ADMIN_SSH_KEY}" \
-                tags="$TAGS" \
-                customData="$CLOUD_INIT_B64"
+                tags="$tags_json" \
+                customData="$CLOUD_INIT_B64" \
+              --output json > /tmp/deployment-result.json
+
+            python - <<'PY'
+            import json
+            import os
+
+            with open('/tmp/deployment-result.json', 'r', encoding='utf-8') as f:
+                deployment = json.load(f)
+
+            outputs = ((deployment.get('properties') or {}).get('outputs') or {})
+
+            def output_value(name):
+                value = outputs.get(name) or {}
+                return value.get('value', '')
+
+            values = {
+                'DEPLOYMENT_NAME': deployment.get('name', 'actions-runner-deployment'),
+                'VM_PUBLIC_IP': output_value('vmPublicIP'),
+                'VM_FQDN': output_value('vmFQDN'),
+                'VNET_ID': output_value('vnetId'),
+                'SUBNET_ID': output_value('subnetId'),
+                'VM_ID': output_value('vmId'),
+                'NIC_ID': output_value('nicId'),
+                'PUBLIC_IP_ID': output_value('publicIpId'),
+            }
+
+            with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
+                for key, val in values.items():
+                    f.write(f"{key}={val}\n")
+            PY
 
       - name: Show deployment outputs
         if: success()
         run: |
           echo "✅ Deployment completed successfully"
-          echo "📋 To check the runner status, visit:"
-          echo "   https://github.com/${{ github.event.inputs.githubRepo }}/settings/actions/runners"
+          echo "- Runner target: ${RUNNER_TARGET}"
+          echo "- Runner URL: ${RUNNER_URL}"
+          echo "- Selected VM size: ${SELECTED_VM_SIZE} (${SELECTED_VM_VCPUS} vCPU)"
+          echo "- Public IP: ${VM_PUBLIC_IP}"
+          echo "- FQDN: ${VM_FQDN}"
+          echo "📋 Runner status URL: ${RUNNER_SETTINGS_URL}"
 
       - name: Report deployment failure
         if: failure()
         run: |
           echo "❌ Deployment failed. See details at:"
           echo "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Write deployment summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          INPUT_LOCATION: ${{ github.event.inputs.location }}
+          INPUT_RG: ${{ github.event.inputs.resourceGroupName }}
+          INPUT_VNET: ${{ github.event.inputs.vnetName }}
+          INPUT_VNET_PREFIX: ${{ github.event.inputs.vnetAddressPrefix }}
+          INPUT_SUBNET: ${{ github.event.inputs.subnetName }}
+          INPUT_SUBNET_PREFIX: ${{ github.event.inputs.subnetAddressPrefix }}
+          INPUT_VM_NAME: ${{ github.event.inputs.vmName }}
+          INPUT_VM_SIZE: ${{ github.event.inputs.vmSize }}
+          INPUT_RUNNER_SCOPE: ${{ github.event.inputs.runnerScope }}
+          INPUT_GH_ORG: ${{ github.event.inputs.githubOrganization }}
+          INPUT_GH_REPO: ${{ github.event.inputs.githubRepo }}
+        run: |
+          set -eo pipefail
+
+          val_or_na() {
+            local val="$1"
+            if [[ -z "${val}" ]]; then
+              printf 'N/A'
+            else
+              printf '%s' "${val}"
+            fi
+          }
+
+          {
+            echo "## Azure Runner Deployment Summary"
+            echo
+            echo "- **Status:** ${JOB_STATUS}"
+            echo "- **Workflow run:** ${RUN_URL}"
+            echo "- **Runner settings URL:** $(val_or_na "${RUNNER_SETTINGS_URL:-}")"
+            echo
+            echo "### Effective Configuration"
+            echo
+            echo "| Option | Value |"
+            echo "|---|---|"
+            echo "| location | $(val_or_na "${INPUT_LOCATION}") |"
+            echo "| resourceGroupName | $(val_or_na "${INPUT_RG}") |"
+            echo "| vnetName | $(val_or_na "${INPUT_VNET}") |"
+            echo "| vnetAddressPrefix | $(val_or_na "${INPUT_VNET_PREFIX}") |"
+            echo "| subnetName | $(val_or_na "${INPUT_SUBNET}") |"
+            echo "| subnetAddressPrefix | $(val_or_na "${INPUT_SUBNET_PREFIX}") |"
+            echo "| vmName | $(val_or_na "${INPUT_VM_NAME}") |"
+            echo "| vmSize requested | $(val_or_na "${INPUT_VM_SIZE}") |"
+            echo "| vmSize selected | $(val_or_na "${SELECTED_VM_SIZE:-}") |"
+            echo "| vmSize selection mode | $(val_or_na "${VM_SIZE_SELECTION_MODE:-}") |"
+            echo "| selected vCPUs | $(val_or_na "${SELECTED_VM_VCPUS:-}") |"
+            echo "| available regional vCPUs | $(val_or_na "${TOTAL_VCPU_AVAILABLE:-}") |"
+            echo "| available family vCPUs | $(val_or_na "${FAMILY_VCPU_AVAILABLE:-}") |"
+            echo "| runnerScope input | $(val_or_na "${INPUT_RUNNER_SCOPE}") |"
+            echo "| runnerScope effective | $(val_or_na "${RUNNER_SCOPE:-}") |"
+            echo "| githubOrganization input | $(val_or_na "${INPUT_GH_ORG}") |"
+            echo "| githubRepo input | $(val_or_na "${INPUT_GH_REPO}") |"
+            echo "| runnerTarget effective | $(val_or_na "${RUNNER_TARGET:-}") |"
+            echo "| runnerUrl effective | $(val_or_na "${RUNNER_URL:-}") |"
+            echo
+            echo "### Azure Resource Outputs"
+            echo
+            echo "| Output | Value |"
+            echo "|---|---|"
+            echo "| resourceGroupId | $(val_or_na "${RESOURCE_GROUP_ID:-}") |"
+            echo "| deploymentName | $(val_or_na "${DEPLOYMENT_NAME:-}") |"
+            echo "| vnetId | $(val_or_na "${VNET_ID:-}") |"
+            echo "| subnetId | $(val_or_na "${SUBNET_ID:-}") |"
+            echo "| vmId | $(val_or_na "${VM_ID:-}") |"
+            echo "| nicId | $(val_or_na "${NIC_ID:-}") |"
+            echo "| publicIpId | $(val_or_na "${PUBLIC_IP_ID:-}") |"
+            echo "| vmPublicIP | $(val_or_na "${VM_PUBLIC_IP:-}") |"
+            echo "| vmFQDN | $(val_or_na "${VM_FQDN:-}") |"
+            echo
+            echo "### Required Secret"
+            echo
+            echo "- \`GH_RUNNER_ORG_PAT\`: PAT/Fine-grained token with permission to create runner registration tokens at organization scope (default flow)."
+          } >> "$GITHUB_STEP_SUMMARY"

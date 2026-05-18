@@ -367,3 +367,6 @@ output vmPublicIP string = pip.properties.ipAddress
 output vmFQDN string = pip.properties.dnsSettings.fqdn
 output vnetId string = vnet.id
 output subnetId string = vnet.properties.subnets[0].id
+output vmId string = vm.id
+output nicId string = nic.id
+output publicIpId string = pip.id
