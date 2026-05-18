@@ -101,7 +101,7 @@ jobs:
 
           echo "Generating runner registration token via GitHub API..."
           REG_TOKEN=$(curl -s -X POST \
-            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Authorization: Bearer ${{ secrets.GH_RUNNER_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.event.inputs.githubRepo }}/actions/runners/registration-token" | jq -r '.token')
 
