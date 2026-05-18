@@ -1,4 +1,5 @@
 # Gradle
 node_modules
 package-lock.json
+!opencode-pro/package-lock.json
 node_modules/

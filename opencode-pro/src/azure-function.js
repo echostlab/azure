@@ -84,6 +84,6 @@ async function handler(request, context) {
 app.http('opencode-pro-webhook', {
   methods: ['POST'],
   authLevel: 'anonymous',
-  route: 'api/webhook',
+  route: 'webhook',
   handler,
 });

@@ -13,7 +13,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createAzure } from '@ai-sdk/azure';
 import { generateText, streamText } from 'ai';
-import { error, debug } from '../utils/logger.js';
+import { error } from '../utils/logger.js';
 
 /**
  * @typedef {import('../config.js').LoadedConfig} LoadedConfig

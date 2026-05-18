@@ -10,11 +10,13 @@
  * @module handlers/trigger
  */
 
+import { parseCommandOverrides } from './command-overrides.js';
+
 /**
  * @typedef {object} TriggerResult
  * @property {boolean} triggered - Whether the bot should respond
  * @property {'slash' | 'mention' | 'auto' | null} type - How it was triggered
- * @property {{ model?: string, provider?: string, agent?: string }} params - Extracted parameters
+ * @property {{ model?: string, provider?: string, agent?: string, continue?: boolean }} params - Extracted parameters
  */
 
 /**
@@ -36,51 +38,6 @@ const MENTION_PATTERNS = [
   /\B@opencode-pro\b/i,
   /\B@opencode-pro\[bot\]\b/i,
 ];
-
-/**
- * Maximum allowed length for an extracted parameter value.
- *
- * @type {number}
- */
-const MAX_PARAM_LENGTH = 256;
-
-/**
- * Extract CLI-style key=value parameters from a comment body.
- *
- * Parameters are single words of the form `key=value` appearing after
- * the trigger word.  Supports quoted and unquoted values.
- * Values exceeding {@link MAX_PARAM_LENGTH} characters are silently ignored.
- *
- * @param {string} body - Full comment body
- * @returns {{ model?: string, provider?: string, agent?: string }}
- */
-function extractParams(body) {
-  if (!body) return {};
-
-  /** @type {Record<string, string>} */
-  const params = {};
-  const paramRegex = /\b(model|provider|agent)=("[^"]*"|'[^']*'|\S+)/gi;
-
-  for (const match of body.matchAll(paramRegex)) {
-    const key = match[1].toLowerCase();
-    let value = match[2];
-
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-
-    if (value.length > MAX_PARAM_LENGTH) continue;
-
-    params[key] = value;
-  }
-
-  return {
-    model: params.model,
-    provider: params.provider,
-    agent: params.agent,
-  };
-}
 
 /**
  * Detect if a comment body should trigger the bot.
@@ -107,7 +64,7 @@ export function detectTrigger(commentBody, commentAuthor, botUsername) {
       return {
         triggered: true,
         type: 'slash',
-        params: extractParams(commentBody),
+        params: parseCommandOverrides(commentBody),
       };
     }
   }
@@ -118,7 +75,7 @@ export function detectTrigger(commentBody, commentAuthor, botUsername) {
       return {
         triggered: true,
         type: 'mention',
-        params: extractParams(commentBody),
+        params: parseCommandOverrides(commentBody),
       };
     }
   }

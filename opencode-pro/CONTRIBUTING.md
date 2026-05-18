@@ -22,15 +22,17 @@ This project follows the [Contributor Covenant Code of Conduct](https://www.cont
 
 ```bash
 # Clone the repository
-git clone https://github.com/anomalyco/opencode-pro.git
-cd opencode-pro
+git clone https://github.com/<owner>/<repo>.git
+cd <repo>/opencode-pro
 
 # Install dependencies
-npm ci
+npm install
 
 # Copy and configure environment variables
 cp .env.example .env
 ```
+
+If your checkout already has `opencode-pro` as the repository root, use `cd <repo>`.
 
 Edit `.env` with at least one LLM provider API key:
 
@@ -223,10 +225,13 @@ src/
 │   ├── issues.js         # issues.opened (auto-triage), issues.assigned, issue_comment.created
 │   ├── pull_requests.js  # PR open/sync (auto-review), review comments, PR assigned
 │   ├── commands.js       # Command parser: detects triggers, dispatches to LLM
+│   ├── command-overrides.js # Shared parse/apply helpers for provider/model/agent/continue overrides
 │   ├── checks.js         # Check Run helpers: create, update, complete with conclusions
+│   ├── review-conclusion.js # Safe mapping to valid GitHub Checks API conclusions
 │   └── trigger.js        # Trigger detection: /oc, /opencode, @opencode-pro, auto-assign
 └── utils/
     ├── github.js         # GitHub API wrappers (comments, diffs, file contents, check runs)
+    ├── ignore-patterns.js # Filters PR files based on config ignorePatterns before review
     └── logger.js         # Structured logging with timestamp and log level filtering
 ```
 

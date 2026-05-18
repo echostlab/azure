@@ -223,11 +223,9 @@ async function runAgent(agentType, config, opts) {
  * @param {import('probot').Context} context - Probot event context
  * @param {string} task - The user's task description
  * @param {import('../config.js').LoadedConfig} config - Loaded LLM configuration
- * @param {object} [opts]
- * @param {string} [opts.repoContext] - Repository context block for injection
  * @returns {Promise<OrchestrationResult>}
  */
-export async function orchestrateAgents(context, task, config, opts = {}) {
+export async function orchestrateAgents(context, task, config) {
   if (!task) {
     throw new Error('orchestrateAgents: task is required');
   }
