@@ -71,7 +71,7 @@ Manually triggered via the **Actions** tab on GitHub using the `workflow_dispatc
 |---|---|
 | 1. **OIDC Login** | Authenticates to Azure using federated credentials — no secrets or passwords |
 | 2. **Create Resource Group** | Creates or verifies the resource group in the specified region |
-| 3. **Prepare cloud-init** | Processes the cloud-init template, injecting the runner token and repo details |
+| 3. **Prepare cloud-init** | Generates a runner registration token via the GitHub API, then embeds it into the cloud-init template |
 | 4. **Deploy Infrastructure** | Deploys VNet, subnet, NSG, and VM via `main.bicep` |
 | 5. **Runner Registration** | VM auto-registers as a self-hosted runner via cloud-init on first boot |
 | 6. **Outputs** | Displays the runner status URL for the target repository |
@@ -87,22 +87,14 @@ The following secrets must be configured in your GitHub repository under **Setti
 | `AZURE_CLIENT_ID` | Application (client) ID of the Entra ID app registration |
 | `AZURE_TENANT_ID` | Directory (tenant) ID of your Entra ID tenant |
 | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID where resources will be deployed |
-| `GH_RUNNER_TOKEN` | GitHub Personal Access Token with `repo` scope for runner registration |
 
 **Note:** No Azure client secret is needed. Authentication is handled entirely via OIDC federated credentials.
 
-### Generating `GH_RUNNER_TOKEN`
+### Runner Registration
 
-The cloud-init script calls the GitHub API to request a runner registration token. This requires a Personal Access Token with the appropriate permissions:
+The workflow automatically generates a runner registration token using the built-in `GITHUB_TOKEN` (which has `actions: write` permission). This token is embedded into the cloud-init configuration and used by the VM on first boot to register itself as a self-hosted runner. No Personal Access Token (PAT) or additional secret configuration is needed.
 
-1. Go to **GitHub Settings > Developer settings > Personal access tokens > Fine-grained tokens**
-2. Click **Generate new token**
-3. Under **Repository access**, select your target repository
-4. Under **Permissions**, set **Administration** to **Read and write**
-5. Generate the token and copy it
-6. Add the token as the `GH_RUNNER_TOKEN` secret in your repository
-
-The Administration permission is required because the [Actions runner registration token API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-a-registration-token-for-a-repository) is scoped under Administration access.
+The registration token is short-lived (expires after 1 hour), so the VM must complete its boot and registration process within that window. This is handled automatically by the cloud-init script.
 
 ---
 
@@ -153,7 +145,7 @@ az role assignment create \
 
 ### 4. Add Secrets to GitHub
 
-Add the four required secrets (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `GH_RUNNER_TOKEN`) to your GitHub repository as described in the section above.
+Add the three required secrets (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) to your GitHub repository as described in the section above.
 
 ---
 

@@ -98,10 +98,23 @@ jobs:
       - name: Prepare cloud-init configuration
         run: |
           set -euo pipefail
+
+          echo "Generating runner registration token via GitHub API..."
+          REG_TOKEN=$(curl -s -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.event.inputs.githubRepo }}/actions/runners/registration-token" | jq -r '.token')
+
+          if [[ -z "${REG_TOKEN}" || "${REG_TOKEN}" == "null" ]]; then
+            echo "ERROR: Failed to generate runner registration token. Verify actions:write permission and repo exists."
+            exit 1
+          fi
+
           sed -e "s|__GH_REPO__|${{ github.event.inputs.githubRepo }}|g" \
-              -e "s|__GH_TOKEN__|${{ secrets.GH_RUNNER_TOKEN }}|g" \
+              -e "s|__REG_TOKEN__|${REG_TOKEN}|g" \
               cloud-init-runner.yml > /tmp/cloud-init-processed.yml
           echo "CLOUD_INIT_B64=$(base64 -w0 /tmp/cloud-init-processed.yml)" >> $GITHUB_ENV
+          echo "::add-mask::$(base64 -w0 /tmp/cloud-init-processed.yml)"
 
       - name: Deploy Bicep template
         uses: azure/cli@v2
